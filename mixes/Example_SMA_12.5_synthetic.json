@@ -1,0 +1,215 @@
+{
+ "schema": 1,
+ "name": "Example SMA 12.5 (synthetic data)",
+ "notes": "Made-up numbers to show how the tool works. Safe to delete.",
+ "created": "2026-10-27T10:00:00",
+ "settings": {
+  "mix_type": "SMA",
+  "gb": 1.03,
+  "fiber_pct": 0.3,
+  "fiber_type": "Cellulose",
+  "units": "auto",
+  "nmas_override": null
+ },
+ "targets": {
+  "vma": 17,
+  "va": 3.5,
+  "vfa": [
+   null,
+   null
+  ],
+  "pb_min": 6,
+  "vcadrc": null
+ },
+ "bailey_ranges": null,
+ "rot": {
+  "PCS": 2,
+  "CA": 0.2,
+  "FAc": 0.1,
+  "FAf": 0.1,
+  "FAc_dip": 0.65,
+  "FAf_dip": 0.7,
+  "AC": 2.25,
+  "pba_abs": 0.65
+ },
+ "control_points": {
+  "19.0": {
+   "min": 100,
+   "max": 100
+  },
+  "12.5": {
+   "min": 90,
+   "max": 99
+  },
+  "9.5": {
+   "min": 50,
+   "max": 75
+  },
+  "4.75": {
+   "min": 20,
+   "max": 28
+  },
+  "2.36": {
+   "min": 16,
+   "max": 24
+  },
+  "0.075": {
+   "min": 8,
+   "max": 11
+  }
+ },
+ "materials": {
+  "CA1": {
+   "name": "12.5 mm limestone chip",
+   "grad": {
+    "25.0": 100,
+    "19.0": 100,
+    "12.5": 92,
+    "9.5": 55,
+    "4.75": 8,
+    "2.36": 3,
+    "1.18": 2.5,
+    "0.6": 2.2,
+    "0.3": 2,
+    "0.15": 1.8,
+    "0.075": 1.4
+   },
+   "gsb": 2.705,
+   "abs": 1.1,
+   "luw": 1430,
+   "ruw": 1580
+  },
+  "CA2": {
+   "name": "9.5 mm limestone chip",
+   "grad": {
+    "25.0": 100,
+    "19.0": 100,
+    "12.5": 100,
+    "9.5": 96,
+    "4.75": 22,
+    "2.36": 5,
+    "1.18": 3,
+    "0.6": 2.5,
+    "0.3": 2.2,
+    "0.15": 2,
+    "0.075": 1.7
+   },
+   "gsb": 2.69,
+   "abs": 1.3,
+   "luw": 1410,
+   "ruw": 1560
+  },
+  "CA3": {
+   "name": "",
+   "grad": {},
+   "gsb": null,
+   "abs": null,
+   "luw": null,
+   "ruw": null
+  },
+  "FA1": {
+   "name": "Manufactured sand",
+   "grad": {
+    "25.0": 100,
+    "19.0": 100,
+    "12.5": 100,
+    "9.5": 100,
+    "4.75": 98,
+    "2.36": 78,
+    "1.18": 50,
+    "0.6": 32,
+    "0.3": 20,
+    "0.15": 13,
+    "0.075": 8.5
+   },
+   "gsb": 2.65,
+   "abs": 1.6,
+   "luw": 1600,
+   "ruw": 1750
+  },
+  "FA2": {
+   "name": "",
+   "grad": {},
+   "gsb": null,
+   "abs": null,
+   "luw": null,
+   "ruw": null
+  },
+  "FA3": {
+   "name": "",
+   "grad": {},
+   "gsb": null,
+   "abs": null,
+   "luw": null,
+   "ruw": null
+  },
+  "F1": {
+   "name": "Limestone mineral filler",
+   "grad": {
+    "25.0": 100,
+    "19.0": 100,
+    "12.5": 100,
+    "9.5": 100,
+    "4.75": 100,
+    "2.36": 100,
+    "1.18": 100,
+    "0.6": 100,
+    "0.3": 99,
+    "0.15": 95,
+    "0.075": 80
+   },
+   "gsb": 2.72,
+   "abs": 0,
+   "luw": null,
+   "ruw": null
+  },
+  "F2": {
+   "name": "Hydrated lime",
+   "grad": {
+    "25.0": 100,
+    "19.0": 100,
+    "12.5": 100,
+    "9.5": 100,
+    "4.75": 100,
+    "2.36": 100,
+    "1.18": 100,
+    "0.6": 100,
+    "0.3": 100,
+    "0.15": 100,
+    "0.075": 95
+   },
+   "gsb": 2.3,
+   "abs": 0,
+   "luw": null,
+   "ruw": null
+  }
+ },
+ "trials": [
+  {
+   "id": "T1",
+   "label": "Trial 1",
+   "source": "lab",
+   "created": "2026-10-27",
+   "pct": {
+    "CA1": 45,
+    "CA2": 25,
+    "FA1": 18,
+    "F1": 11,
+    "F2": 1
+   },
+   "results": {
+    "pb": 6.2,
+    "gmb": [
+     2.39,
+     2.396
+    ],
+    "gmm": [
+     2.47,
+     2.474
+    ],
+    "vcadrc": null
+   },
+   "notes": ""
+  }
+ ]
+}

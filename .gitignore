@@ -1,0 +1,6 @@
+# your own mixes stay on your computer
+mixes/*
+!mixes/Example_SMA_12.5_synthetic.json
+__pycache__/
+*.pyc
+*.tmp
