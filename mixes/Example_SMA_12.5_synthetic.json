@@ -1,15 +1,15 @@
 {
- "schema": 1,
+ "schema": 2,
  "name": "Example SMA 12.5 (synthetic data)",
  "notes": "Made-up numbers to show how the tool works. Safe to delete.",
  "created": "2026-10-27T10:00:00",
  "settings": {
-  "mix_type": "SMA",
+  "mix_type": "sma",
   "gb": 1.03,
   "fiber_pct": 0.3,
   "fiber_type": "Cellulose",
   "units": "auto",
-  "nmas_override": null
+  "nmas_override": 12.5
  },
  "targets": {
   "vma": 17,
@@ -19,19 +19,10 @@
    null
   ],
   "pb_min": 6,
-  "vcadrc": null
+  "vcadrc": null,
+  "vma_tol": 0.3
  },
  "bailey_ranges": null,
- "rot": {
-  "PCS": 2,
-  "CA": 0.2,
-  "FAc": 0.1,
-  "FAf": 0.1,
-  "FAc_dip": 0.65,
-  "FAf_dip": 0.7,
-  "AC": 2.25,
-  "pba_abs": 0.65
- },
  "control_points": {
   "19.0": {
    "min": 100,
@@ -39,15 +30,15 @@
   },
   "12.5": {
    "min": 90,
-   "max": 99
+   "max": 100
   },
   "9.5": {
    "min": 50,
-   "max": 75
+   "max": 80
   },
   "4.75": {
    "min": 20,
-   "max": 28
+   "max": 35
   },
   "2.36": {
    "min": 16,
@@ -191,10 +182,10 @@
    "source": "lab",
    "created": "2026-10-27",
    "pct": {
-    "CA1": 45,
-    "CA2": 25,
-    "FA1": 18,
-    "F1": 11,
+    "CA1": 52,
+    "CA2": 24,
+    "FA1": 14,
+    "F1": 9,
     "F2": 1
    },
    "results": {
@@ -211,5 +202,12 @@
    },
    "notes": ""
   }
- ]
+ ],
+ "rot_override": {},
+ "search": {
+  "min_pile_pct": 5,
+  "min_fillers": false,
+  "one_fine": true,
+  "lock_small_fillers": true
+ }
 }

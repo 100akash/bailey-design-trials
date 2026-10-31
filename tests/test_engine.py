@@ -6,7 +6,7 @@ import bailey as B  # noqa: E402
 
 
 def mats_sample():
-    S = B.SIEVES
+    S = [s for s in B.SIEVES if s <= 25.0]
     def g(vals): return {str(s): v for s, v in zip(S, vals)}
     return {
         "CA1": dict(name="12.5 mm chip", grad=g([100, 100, 92, 55, 8, 3, 2.5, 2.2, 2, 1.8, 1.4]), gsb=2.705, abs=1.1, luw=1430, ruw=1580),

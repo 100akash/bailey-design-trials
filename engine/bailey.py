@@ -1,5 +1,5 @@
 """
-Bailey SMA design engine.
+Bailey design engine: SMA and dense-graded (coarse and fine) mixes.
 
 Method: Vavrik, Huber, Pine, Carpenter and Bailey (2002), Bailey Method for
 Gradation Selection in HMA Mixture Design, TRB Circular E-C044. Volume blending
@@ -16,9 +16,10 @@ from decimal import Decimal, ROUND_HALF_UP
 import math
 
 # ---------------------------------------------------------------- constants
-SIEVES = [25.0, 19.0, 12.5, 9.5, 4.75, 2.36, 1.18, 0.6, 0.3, 0.15, 0.075]
+SIEVES = [50.0, 37.5, 25.0, 19.0, 12.5, 9.5, 4.75, 2.36, 1.18, 0.6, 0.3, 0.15, 0.075]
+TOP_DEFAULT_100 = (50.0, 37.5)   # older mixes have no values here: treat as 100 % passing
 SIEVE_LABELS = {
-    25.0: ("25.0 mm", '1"'), 19.0: ("19.0 mm", '3/4"'), 12.5: ("12.5 mm", '1/2"'),
+    50.0: ("50.0 mm", '2"'), 37.5: ("37.5 mm", '1 1/2"'), 25.0: ("25.0 mm", '1"'), 19.0: ("19.0 mm", '3/4"'), 12.5: ("12.5 mm", '1/2"'),
     9.5: ("9.5 mm", '3/8"'), 4.75: ("4.75 mm", "#4"), 2.36: ("2.36 mm", "#8"),
     1.18: ("1.18 mm", "#16"), 0.6: ("0.600 mm", "#30"), 0.3: ("0.300 mm", "#50"),
     0.15: ("0.150 mm", "#100"), 0.075: ("0.075 mm", "#200"),
@@ -28,6 +29,7 @@ KIND = {"CA1": "CA", "CA2": "CA", "CA3": "CA", "FA1": "FA", "FA2": "FA", "FA3": 
 
 # control sieves for C-G and SMA: half, PCS, SCS, TCS
 CONTROL = {
+    37.5: (19.0, 9.5, 2.36, 0.6),
     25.0: (12.5, 4.75, 1.18, 0.3),
     19.0: (9.5, 4.75, 1.18, 0.3),
     12.5: (6.35, 2.36, 0.6, 0.15),   # 6.35 interpolated
@@ -35,11 +37,100 @@ CONTROL = {
     4.75: (2.36, 1.18, 0.3, 0.075),
 }
 
-SMA_CA_RANGE = {25.0: (0.45, 0.60), 19.0: (0.35, 0.50), 12.5: (0.25, 0.40),
-                9.5: (0.15, 0.30), 4.75: (0.05, 0.20)}
+# fine-graded mixes: new half, new PCS, new SCS, new TCS on the fine fraction, plus the original PCS
+FG_CONTROL = {
+    37.5: (4.75, 2.36, 0.6, 0.15, 9.5),
+    25.0: (2.36, 1.18, 0.3, 0.075, 4.75),
+    19.0: (2.36, 1.18, 0.3, 0.075, 4.75),
+    12.5: (1.18, 0.6, 0.15, None, 2.36),
+    9.5: (1.18, 0.6, 0.15, None, 2.36),
+    4.75: (0.6, 0.3, 0.075, None, 1.18),
+}
 
-DEFAULT_ROT = {"PCS": 2.0, "CA": 0.20, "FAc": 0.10, "FAf": 0.10,
-               "FAc_dip": 0.65, "FAf_dip": 0.70, "AC": 2.25, "pba_abs": 0.65}
+# Typical values from the 2023 Bailey Method course; they take priority over TRB E-C044.
+CA_RANGE = {
+    "sma": {25.0: (0.45, 0.60), 19.0: (0.35, 0.50), 12.5: (0.25, 0.40), 9.5: (0.15, 0.30), 4.75: (0.05, 0.20)},
+    "cg": {37.5: (0.80, 0.95), 25.0: (0.70, 0.85), 19.0: (0.60, 0.75), 12.5: (0.50, 0.65), 9.5: (0.40, 0.55), 4.75: (0.30, 0.45)},
+}
+SMA_CA_RANGE = CA_RANGE["sma"]
+
+TYPE_INFO = {
+    "sma": {"label": "SMA", "uw_ref": "ruw", "fa_ref": "luw", "uw_range": [110, 125], "uw_start": 118, "uw_label": "% CA RUW",
+            "FAc": [0.60, 0.85], "FAf": [0.65, 0.90],
+            "rot": {"PCS": 2.0, "CA": 0.20, "FAc": 0.10, "FAf": 0.10, "FAc_dip": 0.65, "FAf_dip": 0.70, "AC": 2.25, "pba_abs": 0.65},
+            "rot_range": {"PCS": [1, 3], "CA": [0.10, 0.30], "FAc": [0.075, 0.125], "FAf": [0.075, 0.125],
+                          "FAc_dip": [0.55, 0.75], "FAf_dip": [0.60, 0.80], "AC": [1.5, 3.0]},
+            "pcs_dir": -1, "vca": "VCAmix at or below VCA dry-rodded", "lever": "Coarse volume",
+            "band": "AASHTO M 325"},
+    "cg": {"label": "Dense, coarse-graded", "uw_ref": "luw", "fa_ref": "ruw", "uw_range": [95, 105], "uw_start": 100, "uw_label": "% CA LUW",
+           "FAc": [0.35, 0.50], "FAf": [0.35, 0.50],
+           "rot": {"PCS": 4.0, "CA": 0.20, "FAc": 0.05, "FAf": 0.05, "FAc_dip": 0.55, "FAf_dip": 0.55, "AC": 2.25, "pba_abs": 0.65},
+           "rot_range": {"PCS": [3, 5], "CA": [0.10, 0.30], "FAc": [0.025, 0.075], "FAf": [0.025, 0.075],
+                         "FAc_dip": [0.45, 0.65], "FAf_dip": [0.45, 0.65], "AC": [1.5, 3.0]},
+           "pcs_dir": -1, "vca": "VCAmix at or below the fine aggregate volume", "lever": "FAc",
+           "band": "ASTM D3515"},
+    "fg": {"label": "Dense, fine-graded", "uw_ref": "luw", "fa_ref": "ruw", "uw_range": [60, 80], "uw_start": 70, "uw_label": "% CA LUW",
+           "CA": [0.60, 1.00], "FAc": [0.35, 0.50], "FAf": [0.35, 0.50],
+           "rot": {"PCS": 6.0, "CA": 0.35, "FAc": 0.05, "FAf": 0.05, "FAc_dip": 0.50, "FAf_dip": 0.50, "AC": 2.25, "pba_abs": 0.65},
+           "rot_range": {"PCS": [5, 7], "CA": [0.25, 0.45], "FAc": [0.025, 0.075], "FAf": [0.025, 0.075],
+                         "FAc_dip": [0.40, 0.60], "FAf_dip": [0.40, 0.60], "AC": [1.5, 3.0]},
+           "pcs_dir": 1, "vca": "VCAmix 3 to 5% below the fine aggregate volume", "lever": "New FAc",
+           "band": "ASTM D3515"},
+}
+DEFAULT_ROT = dict(TYPE_INFO["sma"]["rot"])
+
+# gradation bands: sieve -> (min, max)
+SPEC_BANDS = {
+    "sma": {
+        19.0: {25.0: (100, 100), 19.0: (90, 100), 12.5: (50, 88), 9.5: (25, 60), 4.75: (20, 28), 2.36: (16, 24), 0.075: (8, 11)},
+        12.5: {19.0: (100, 100), 12.5: (90, 100), 9.5: (50, 80), 4.75: (20, 35), 2.36: (16, 24), 0.075: (8, 11)},
+        9.5: {12.5: (100, 100), 9.5: (70, 95), 4.75: (30, 50), 2.36: (20, 30), 1.18: (None, 21), 0.6: (None, 18), 0.3: (None, 15), 0.075: (8, 12)},
+        4.75: {9.5: (100, 100), 4.75: (90, 100), 2.36: (28, 65), 1.18: (22, 36), 0.6: (18, 28), 0.3: (15, 22), 0.15: (13, 18), 0.075: (12, 15)},
+    },
+    "dense": {
+        37.5: {50.0: (100, 100), 37.5: (90, 100), 25.0: (68, 88), 19.0: (56, 80), 12.5: (44, 70), 9.5: (37, 64), 4.75: (23, 53), 2.36: (15, 41), 1.18: (10, 30), 0.6: (7, 22), 0.3: (4, 16), 0.15: (2, 12), 0.075: (0, 6)},
+        25.0: {37.5: (100, 100), 25.0: (90, 100), 19.0: (74, 91), 12.5: (56, 80), 9.5: (46, 73), 4.75: (29, 59), 2.36: (19, 45), 1.18: (13, 33), 0.6: (8, 24), 0.3: (5, 17), 0.15: (3, 12), 0.075: (1, 7)},
+        19.0: {25.0: (100, 100), 19.0: (90, 100), 12.5: (68, 88), 9.5: (56, 80), 4.75: (35, 65), 2.36: (23, 49), 1.18: (15, 35), 0.6: (9, 25), 0.3: (5, 19), 0.15: (3, 13), 0.075: (2, 8)},
+        12.5: {19.0: (100, 100), 12.5: (90, 100), 9.5: (74, 91), 4.75: (44, 74), 2.36: (28, 58), 1.18: (18, 42), 0.6: (11, 30), 0.3: (5, 21), 0.15: (3, 15), 0.075: (2, 10)},
+        9.5: {12.5: (100, 100), 9.5: (90, 100), 4.75: (55, 85), 2.36: (32, 67), 1.18: (20, 46), 0.6: (12, 33), 0.3: (7, 23), 0.15: (3, 15), 0.075: (2, 10)},
+        4.75: {9.5: (95, 100), 4.75: (90, 100), 2.36: (50, 75), 1.18: (30, 54), 0.6: (20, 40), 0.3: (13, 30), 0.15: (8, 20), 0.075: (6, 12)},
+    },
+}
+
+
+def mix_type(mix, nmas=None):
+    """'sma', 'cg' or 'fg'. 'dense' means detect: fine-graded when the coarse aggregate
+    sits at 90 % of LUW or less in the first full trial."""
+    t = str((mix.get("settings") or {}).get("mix_type") or "sma").lower()
+    if t in ("sma", "cg", "fg"):
+        return t
+    if t != "dense":
+        return "sma"
+    nmas = nmas or design_nmas(mix)
+    if nmas:
+        conv = detect_conv(mix.get("materials", {}), (mix.get("settings") or {}).get("units", "auto"))
+        for tr in mix.get("trials") or []:
+            pct = tr.get("pct") or {}
+            if sum((num(v) or 0) for v in pct.values()) > 99:
+                try:
+                    bc = back_calc(mix["materials"], pct, nmas, conv, mix="cg")
+                    if bc and bc.get("cuw_pct") is not None:
+                        return "fg" if bc["cuw_pct"] <= 90 else "cg"
+                except Exception:
+                    pass
+                break
+    return "cg"
+
+
+def rot_for(mix, mtype=None):
+    mtype = mtype or mix_type(mix)
+    base = TYPE_INFO[mtype]["rot"]
+    if "rot_override" in mix:
+        src = mix.get("rot_override") or {}
+    else:   # older files stored the full factor set; keep only what differs from the defaults
+        src = {k: v for k, v in (mix.get("rot") or {}).items() if num(v) is not None and k in base and abs(num(v) - base[k]) > 1e-9}
+    over = {k: num(v) for k, v in src.items() if num(v) is not None and k in base}
+    return {**base, **over}
 
 
 # Bailey goals: key, soft scale, tolerance used when a goal is hard or a target value
@@ -48,7 +139,7 @@ BAILEY_KEYS = (("ca_ruw", 1.0, 1.0), ("CA", 0.05, 0.01), ("FAc", 0.05, 0.01), ("
 
 def bailey_goals(mix, nmas):
     """Range from setup, optional target value and hard flag from the Next trial screen."""
-    rng = mix.get("bailey_ranges") or default_ranges(nmas)
+    rng = mix.get("bailey_ranges") or default_ranges(nmas, mix_type(mix, nmas))
     tg = mix.get("bailey_targets") or {}
     out = {}
     for k, _, tol in BAILEY_KEYS:
@@ -74,9 +165,13 @@ def practical(mix):
             "one_fine": bool(sp.get("one_fine", True))}
 
 
-def default_ranges(nmas: float | None):
-    ca = SMA_CA_RANGE.get(nmas, (None, None)) if nmas else (None, None)
-    return {"ca_ruw": [110, 125], "CA": list(ca), "FAc": [0.60, 0.85], "FAf": [0.65, 0.90]}
+def default_ranges(nmas, mtype="sma"):
+    info = TYPE_INFO[mtype]
+    if mtype == "fg":
+        ca = info["CA"]
+    else:
+        ca = CA_RANGE[mtype].get(nmas, (None, None)) if nmas else (None, None)
+    return {"ca_ruw": list(info["uw_range"]), "CA": list(ca), "FAc": list(info["FAc"]), "FAf": list(info["FAf"])}
 
 
 # ---------------------------------------------------------------- helpers
@@ -112,7 +207,10 @@ def grad_list(mat):
         v = g.get(str(s)) if isinstance(g, dict) else None
         if v is None and isinstance(g, dict):
             v = g.get(f"{s:g}")
-        out.append(num(v))
+        v = num(v)
+        if v is None and s in TOP_DEFAULT_100:
+            v = 100.0
+        out.append(v)
     return out
 
 
@@ -192,16 +290,29 @@ def half_635(p95, p475):
     return xround(p95 - 0.6632 * (p95 - p475), 1)
 
 
-def control_points(nmas):
+def control_points(nmas, mtype="sma"):
+    if mtype == "fg":
+        h, pcs, scs, tcs, op = FG_CONTROL[nmas]
+        return {"half": h, "pcs": pcs, "scs": scs, "tcs": tcs, "coarse_pcs": op, "new": True}
     h, pcs, scs, tcs = CONTROL[nmas]
-    return {"half": h, "pcs": pcs, "scs": scs, "tcs": tcs}
+    return {"half": h, "pcs": pcs, "scs": scs, "tcs": tcs, "coarse_pcs": pcs, "new": False}
 
 
-def ratios(nmas, grad):
-    h, pcs, scs, tcs = CONTROL[nmas]
-    ph = half_635(grad[9.5], grad[4.75]) if nmas == 12.5 else grad[h]
+def ratios(nmas, grad, mtype="sma"):
     def safe(a, b):
         return xround(a / b, 3) if b else None
+    if mtype == "fg":
+        h, pcs, scs, tcs, op = FG_CONTROL[nmas]
+        ph = grad[h]
+        return {
+            "pct_half": ph, "pct_pcs": grad[op], "pct_newpcs": grad[pcs], "pct_scs": grad[scs],
+            "pct_tcs": grad[tcs] if tcs else None,
+            "CA": safe(ph - grad[pcs], grad[op] - ph),
+            "FAc": safe(grad[scs], grad[pcs]),
+            "FAf": safe(grad[tcs], grad[scs]) if tcs else None,
+        }
+    h, pcs, scs, tcs = CONTROL[nmas]
+    ph = half_635(grad[9.5], grad[4.75]) if nmas == 12.5 else grad[h]
     return {
         "pct_half": ph, "pct_pcs": grad[pcs], "pct_scs": grad[scs], "pct_tcs": grad[tcs],
         "CA": safe(ph - grad[pcs], 100 - ph),
@@ -409,20 +520,31 @@ def analyze_blend(mix, pct, nmas=None):
     grad = blend_gradation(materials, pct)
     nm_det = bailey_nmas(grad)
     nmas = nmas or nm_det
-    r = ratios(nmas, grad)
-    cs = control_points(nmas)
+    if nmas not in CONTROL:
+        nmas = min(CONTROL, key=lambda k: abs(k - nmas))
+    mt = mix_type(mix, nmas)
+    r = ratios(nmas, grad, mt)
+    cs = control_points(nmas, mt)
     out = {
         "gradation": grad, "gradation_volume": gradation_by_volume(materials, pct),
-        "nmas_detected": nm_det, "nmas": nmas, "control": cs, "ratios": r,
+        "nmas_detected": nm_det, "nmas": nmas, "mix_type": mt, "control": cs, "ratios": r,
         "gsb": combined_gsb(materials, pct), "abs": combined_abs(materials, pct),
-        "gca": combined_gca(materials, pct, cs["pcs"]), "conv": conv,
+        "gca": combined_gca(materials, pct, cs["coarse_pcs"]), "conv": conv,
         "sum": xround(sum((num(v) or 0) for v in pct.values()), 2),
     }
     try:
-        out["bailey"] = back_calc(materials, pct, nmas, conv)
+        out["bailey"] = back_calc(materials, pct, nmas, conv, mix="sma" if mt == "sma" else "cg")
     except Exception as e:  # incomplete materials
         out["bailey"] = {"error": str(e)}
-    out["warnings"] = slot_warnings(materials, cs["pcs"], pct)
+    out["warnings"] = slot_warnings(materials, cs["coarse_pcs"], pct)
+    # first-trial binder estimate, as in the volume blending sheet
+    tg = mix.get("targets") or {}
+    vt, at = num(tg.get("vma")), num(tg.get("va"))
+    if vt is not None and at is not None and out["abs"] is not None:
+        rot = rot_for(mix, mt)
+        pba = rot["pba_abs"] * out["abs"]
+        pbe = (vt - at) / rot["AC"]
+        out["est_pb"] = {"pba": xround(pba, 2), "pbe": xround(pbe, 2), "pb": xround(pba + pbe, 2)}
     return out
 
 
@@ -482,14 +604,16 @@ def predict(mix, ref, new, rot=None, targets=None):
     """ref: trial_results() of the reference trial (needs volumetrics).
     new: analyze_blend() of the proposed blend.
     Returns predicted VMA, recommended Pb for target Va, Va at that Pb, VCAmix."""
-    rot = {**DEFAULT_ROT, **(rot or {})}
+    mt = new.get("mix_type") or mix_type(mix)
+    rot = {**rot_for(mix, mt), **(rot or {})}
     targets = targets or {}
     rv, rr, nr = ref["volumetrics"], ref["ratios"], new["ratios"]
+    both = lambda k: rr.get(k) is not None and nr.get(k) is not None
     terms = {
-        "PCS": -(nr["pct_pcs"] - rr["pct_pcs"]) / rot["PCS"],
-        "CA": (nr["CA"] - rr["CA"]) / rot["CA"],
-        "FAc": _dip(rr["FAc"], nr["FAc"], rot["FAc"], rot["FAc_dip"]),
-        "FAf": _dip(rr["FAf"], nr["FAf"], rot["FAf"], rot["FAf_dip"]),
+        "PCS": TYPE_INFO[mt]["pcs_dir"] * (nr["pct_pcs"] - rr["pct_pcs"]) / rot["PCS"],
+        "CA": (nr["CA"] - rr["CA"]) / rot["CA"] if both("CA") else 0.0,
+        "FAc": _dip(rr["FAc"], nr["FAc"], rot["FAc"], rot["FAc_dip"]) if both("FAc") else 0.0,
+        "FAf": _dip(rr["FAf"], nr["FAf"], rot["FAf"], rot["FAf_dip"]) if both("FAf") else 0.0,
     }
     dvma = sum(terms.values())
     vma = rv["vma"] + dvma
@@ -508,9 +632,9 @@ def predict(mix, ref, new, rot=None, targets=None):
     vfa = 100 * (vma - va) / vma if vma else None
     big = []
     if abs(nr["pct_pcs"] - rr["pct_pcs"]) > 3: big.append("PCS")
-    if abs(nr["CA"] - rr["CA"]) > 0.15: big.append("CA ratio")
-    if abs(nr["FAc"] - rr["FAc"]) > 0.10: big.append("FAc")
-    if abs(nr["FAf"] - rr["FAf"]) > 0.10: big.append("FAf")
+    if both("CA") and abs(nr["CA"] - rr["CA"]) > 0.15: big.append("CA ratio")
+    if both("FAc") and abs(nr["FAc"] - rr["FAc"]) > 0.10: big.append("FAc")
+    if both("FAf") and abs(nr["FAf"] - rr["FAf"]) > 0.10: big.append("FAf")
     return {
         "terms": {k: xround(v, 2) for k, v in terms.items()},
         "dvma": xround(dvma, 2), "vma": xround(vma, 2),
@@ -519,6 +643,7 @@ def predict(mix, ref, new, rot=None, targets=None):
         "gmb": xround(gmb, 3) if gmb else None, "vca_mix": vca,
         "large_moves": big, "ref_trial": ref.get("_id"),
         "ref": {"vma": rv["vma"], "va": rv["va"], "pb": pb_ref, "pba": rv["pba"]}, "ac_factor": rot["AC"],
+        "rot": rot,
     }
 
 
@@ -545,9 +670,8 @@ def objective(mix, ref, cand_pct, base_pct, weights, nmas, cache=None):
     if cache is not None and key in cache:
         return cache[key]
     targets = mix.get("targets", {})
-    rng = mix.get("bailey_ranges") or default_ranges(nmas)
     new = analyze_blend(mix, cand_pct, nmas)
-    p = predict(mix, ref, new, mix.get("rot"), targets)
+    p = predict(mix, ref, new, None, targets)
     J = 0.0
     vt = num(targets.get("vma"))
     if vt is not None:
@@ -567,8 +691,10 @@ def objective(mix, ref, cand_pct, base_pct, weights, nmas, cache=None):
             J += (weights["skeleton"] if k == "ca_ruw" else weights["soft"]) * _penalty_range(v, band, sc)
     # Do not lean on the far side of an FA dip to buy VMA. The usual advice for
     # SMA is to move VMA with CA volume and to find an optimum filler content.
-    rot = {**DEFAULT_ROT, **(mix.get("rot") or {})}
+    rot = rot_for(mix, new["mix_type"])
     for k, d in (("FAc", rot["FAc_dip"]), ("FAf", rot["FAf_dip"])):
+        if ref["ratios"].get(k) is None:
+            continue
         lim = max(d, ref["ratios"][k])
         if new["ratios"][k] is not None and new["ratios"][k] > lim:
             J += weights["soft"] * ((new["ratios"][k] - lim) / 0.03) ** 2
@@ -811,8 +937,10 @@ def design_nmas(mix):
 
 def analyze_mix(mix):
     nmas = design_nmas(mix)
-    out = {"nmas": nmas, "conv": detect_conv(mix.get("materials", {}), mix.get("settings", {}).get("units", "auto")),
-           "default_ranges": default_ranges(nmas), "trials": [], "materials": {}}
+    mt = mix_type(mix, nmas)
+    out = {"nmas": nmas, "mix_type": mt, "type_info": TYPE_INFO[mt], "rot": rot_for(mix, mt),
+           "conv": detect_conv(mix.get("materials", {}), mix.get("settings", {}).get("units", "auto")),
+           "default_ranges": default_ranges(nmas, mt), "trials": [], "materials": {}}
     for s in SLOTS:
         m = mix.get("materials", {}).get(s) or {}
         info = {"ready": material_ready(m)}
@@ -824,7 +952,9 @@ def analyze_mix(mix):
                 info[k + "_voids"] = xround(100 * (1 - uw / (gsb * conv)), 1)
         out["materials"][s] = info
     if nmas:
-        out["control"] = control_points(nmas)
+        out["control"] = control_points(nmas, mt)
+        out["band"] = {"name": TYPE_INFO[mt]["band"],
+                       "limits": {str(k): list(v) for k, v in SPEC_BANDS["sma" if mt == "sma" else "dense"].get(nmas, {}).items()}}
         for t in mix.get("trials") or []:
             pct = t.get("pct") or {}
             if sum((num(v) or 0) for v in pct.values()) < 99:
@@ -838,3 +968,98 @@ def analyze_mix(mix):
             except Exception as e:
                 out["trials"].append({"id": t.get("id"), "error": str(e)})
     return out
+
+
+# ---------------------------------------------------------------- prediction accuracy and fitted factors
+def tested_trials(mix, nmas):
+    out = []
+    for t in mix.get("trials") or []:
+        pct = t.get("pct") or {}
+        if sum((num(v) or 0) for v in pct.values()) < 99:
+            continue
+        try:
+            r = trial_results(mix, t, nmas)
+        except Exception:
+            continue
+        if r["volumetrics"].get("complete"):
+            r["_id"] = t.get("id")
+            r["_label"] = t.get("label") or t.get("id")
+            out.append(r)
+    return out
+
+
+def _pair_error(mix, ref, new, rot):
+    p = predict(mix, ref, new, rot, mix.get("targets"))
+    v, rv = new["volumetrics"], ref["volumetrics"]
+    pba_new = p["pba"]
+    va_pred = rv["va"] + p["dvma"] + ((rv["pb"] - rv["pba"]) - (v["pb"] - pba_new)) * p["ac_factor"]
+    return {"ref": ref["_id"], "ref_label": ref["_label"], "id": new["_id"], "label": new["_label"],
+            "vma_pred": xround(p["vma"], 2), "vma": v["vma"], "vma_err": xround(p["vma"] - v["vma"], 2),
+            "va_pred": xround(va_pred, 2), "va": v["va"], "va_err": xround(va_pred - v["va"], 2)}
+
+
+def accuracy(mix, mode="previous", rot=None):
+    """Predict each tested trial from the one before it ('previous') or from the first ('first')."""
+    nmas = design_nmas(mix)
+    T = tested_trials(mix, nmas) if nmas else []
+    rows = []
+    for i in range(1, len(T)):
+        ref = T[i - 1] if mode == "previous" else T[0]
+        rows.append(_pair_error(mix, ref, T[i], rot))
+    within = sum(1 for r in rows if abs(r["vma_err"]) <= 0.5)
+    return {"mode": mode, "rows": rows, "n": len(rows), "within_05": within, "tested": len(T)}
+
+
+def fit_rot(mix):
+    """Fit the rules of thumb to the user's tested trials. Every tested trial is predicted
+    from every earlier one; factors stay inside the typical range for the mix type."""
+    nmas = design_nmas(mix)
+    T = tested_trials(mix, nmas) if nmas else []
+    mt = mix_type(mix, nmas)
+    if len(T) < 3:
+        return {"ok": False, "tested": len(T), "message": "Needs at least 3 tested trials."}
+    pairs = [(T[i], T[j]) for i in range(len(T)) for j in range(i + 1, len(T))]
+    rng = TYPE_INFO[mt]["rot_range"]
+    cur = rot_for(mix, mt)
+
+    def cost(r, key="vma_err"):
+        e = [_pair_error(mix, a, b, r)[key] for a, b in pairs]
+        return sum(x * x for x in e) / len(e)
+
+    start = dict(cur)
+    best = dict(cur)
+    bc = cost(best)
+    steps = {"PCS": 0.05, "CA": 0.005, "FAc": 0.0025, "FAf": 0.0025, "FAc_dip": 0.005, "FAf_dip": 0.005}
+    for _ in range(40):
+        improved = False
+        for k in ("FAc_dip", "FAf_dip", "PCS", "CA", "FAc", "FAf"):
+            for d in (+1, -1):
+                for mult in (8, 4, 2, 1):
+                    trial = dict(best)
+                    trial[k] = min(rng[k][1], max(rng[k][0], best[k] + d * mult * steps[k]))
+                    if abs(trial[k] - best[k]) < 1e-12:
+                        continue
+                    c = cost(trial)
+                    if c < bc - 1e-6:
+                        best, bc, improved = trial, c, True
+                        break
+        if not improved:
+            break
+    # binder factor from the air-void errors
+    vc = cost(best, "va_err")
+    for _ in range(60):
+        moved = False
+        for d in (0.05, -0.05):
+            trial = dict(best)
+            trial["AC"] = min(rng["AC"][1], max(rng["AC"][0], best["AC"] + d))
+            c = cost(trial, "va_err")
+            if c < vc - 1e-6:
+                best, vc, moved = trial, c, True
+                break
+        if not moved:
+            break
+    rms = lambda r, k="vma_err": math.sqrt(cost(r, k))
+    return {"ok": True, "tested": len(T), "comparisons": len(pairs), "mix_type": mt,
+            "rot": {k: xround(v, 4) for k, v in best.items()},
+            "vma_rms_before": xround(rms(start), 2), "vma_rms_after": xround(rms(best), 2),
+            "va_rms_before": xround(rms(start, "va_err"), 2), "va_rms_after": xround(rms(best, "va_err"), 2)}

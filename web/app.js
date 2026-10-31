@@ -1,15 +1,23 @@
-/* Bailey SMA Design Tool: interface.
-   Plain JavaScript, no build step. Talks to server.py. */
+/* Bailey Design Trials: interface.
+   Plain JavaScript, no build step. Talks to server.py, or to the Python engine
+   running in the browser (webapi.js) on the web version. */
 "use strict";
 
 const S = {
   meta: null, file: null, mix: null, an: null,
-  step: "setup", selTrial: null,
-  suggestion: null, optKey: "balanced", proposal: null, proposalPred: null,
-  locks: {}, ref: null, chartBasis: "mass",
+  tab: "trials", sel: null, sub: "blend",
+  live: {},          // live prediction per trial id
+  sugg: {},          // suggestions per trial id
+  addedSlots: {},    // empty stockpile columns the user added this session
+  chartBasis: "mass",
 };
 const SLOT_NAMES = { CA1: "Coarse 1", CA2: "Coarse 2", CA3: "Coarse 3", FA1: "Fine 1", FA2: "Fine 2", FA3: "Fine 3", F1: "Filler 1", F2: "Filler 2" };
-
+const KIND_NAMES = { CA: "Coarse", FA: "Fine", F: "Filler" };
+const SLOT_COLORS = { CA1: "#1F62B8", CA2: "#4C98E6", CA3: "#0D3D78", FA1: "#2B9A56", FA2: "#7AC46F", FA3: "#196B3B", F1: "#8E3FB3", F2: "#D65BB5" };
+const slotColor = (s) => SLOT_COLORS[s] || "#666";
+const C_CUR = "#FF5F05", C_PROP = "#13294B", C_OLD = "#A9AEB3", C_REF = "#7E848A";
+const TYPE_KEYS = [["sma", "SMA"], ["cg", "Dense, coarse-graded"], ["fg", "Dense, fine-graded"], ["dense", "Dense, detect from Trial 1"]];
+const NMAS_KEYS = ["37.5", "25.0", "19.0", "12.5", "9.5", "4.75"];
 /* ---------------------------------------------------------------- utilities */
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -57,33 +65,61 @@ function setPath(o, path, v) {
   path.slice(0, -1).forEach((k, i) => { if (cur[k] == null) cur[k] = typeof path[i + 1] === "number" ? [] : {}; cur = cur[k]; });
   cur[path[path.length - 1]] = v;
 }
-const sieves = () => S.meta.sieves;
-const ctlFor = (nmas) => { const k = Object.keys(S.meta.control).find((x) => Math.abs(+x - nmas) < 1e-9); return k ? S.meta.control[k] : null; };
-const lab = (s) => S.meta.labels[s];
+
+/* ---------------------------------------------------------------- mix helpers */
+const allSieves = () => S.meta.sieves;
+function topSieve() {
+  const n = S.an?.nmas ?? num(S.mix?.settings?.nmas_override);
+  let top = 25;
+  if (n >= 37.5) top = 50; else if (n >= 25) top = 37.5;
+  ["50.0", "37.5"].forEach((s) => {
+    if (+s > top && Object.values(S.mix?.materials || {}).some((m) => num(m?.grad?.[s]) != null && num(m.grad[s]) < 100)) top = Math.max(top, +s);
+  });
+  return top;
+}
+const sieves = () => allSieves().filter((s) => +s <= topSieve() + 1e-9);
+const lab = (s) => S.meta.labels[s] || [s + " mm", ""];
 const matName = (slot) => (S.mix.materials[slot]?.name || "").trim() || SLOT_NAMES[slot];
 const readySlots = () => S.meta.slots.filter((s) => { const m = S.mix.materials[s]; return m && (m.name || "").trim() && num(m.gsb); });
+const usedSlots = () => S.meta.slots.filter((s) => (S.mix.materials[s]?.name || "").trim() || S.addedSlots[s]);
+function normType(t) { t = String(t || "sma").toLowerCase(); return ["sma", "cg", "fg", "dense"].includes(t) ? t : "sma"; }
+const mixType = () => S.an?.mix_type || (normType(S.mix.settings.mix_type) === "dense" ? "cg" : normType(S.mix.settings.mix_type));
+const typeInfo = () => S.meta.types[mixType()];
+function typeLabel() {
+  const t = normType(S.mix.settings.mix_type);
+  if (t === "dense") return S.an?.mix_type ? `${S.meta.types[S.an.mix_type].label} (detected)` : "Dense";
+  return S.meta.types[t].label;
+}
+const uwKey = () => (mixType() === "sma" ? "ruw" : "luw");
+const faUwKey = () => (mixType() === "sma" ? "luw" : "ruw");
+const unitLabel = () => (S.an?.conv === 62.4 ? "lb/ft³" : "kg/m³");
+const trialById = (id) => (S.mix.trials || []).find((t) => t.id === id);
+const anTrial = (id) => (S.an?.trials || []).find((t) => t.id === id);
+const testedAn = () => (S.an?.trials || []).filter((t) => t.volumetrics?.complete);
+const isTested = (id) => !!anTrial(id)?.volumetrics?.complete;
+const pctSum = (pct) => Object.values(pct || {}).reduce((x, y) => x + (num(y) || 0), 0);
+function trialStatus(t) {
+  if (isTested(t.id)) return "Tested";
+  return Math.abs(pctSum(t.pct) - 100) <= 0.05 ? "Planned" : "Draft";
+}
+const sieveName = (v) => { const k = allSieves().find((x) => Math.abs(+x - +v) < 1e-9); return k ? `${lab(k)[0]} (${lab(k)[1]})` : `${v} mm`; };
 function practicalUI(seed) {
   if (seed && !S.mix.search) S.mix.search = { min_pile_pct: 5, min_fillers: false, one_fine: true };
   const sp = S.mix.search || {};
   const mn = "min_pile_pct" in sp ? (num(sp.min_pile_pct) || 0) : 5;
-  return { min_pile_pct: mn, min_fillers: !!sp.min_fillers, one_fine: sp.one_fine == null ? true : !!sp.one_fine };
+  return { min_pile_pct: mn, min_fillers: !!sp.min_fillers, one_fine: sp.one_fine == null ? true : !!sp.one_fine, lock_small_fillers: sp.lock_small_fillers == null ? true : !!sp.lock_small_fillers };
 }
-function smallPiles(pct) {
+function smallPiles(pct, locks) {
   const pr = practicalUI(), out = [];
   if (pr.min_pile_pct <= 0) return [out, 0];
   readySlots().forEach((s) => {
     const x = num(pct?.[s]) || 0;
-    if (S.locks?.[s] || (S.meta.kind[s] === "F" && !pr.min_fillers)) return;
+    if (locks?.[s] || (S.meta.kind[s] === "F" && !pr.min_fillers)) return;
     if (x > 0.05 && x < pr.min_pile_pct - 1e-9) out.push([s, x]);
   });
   return [out, pr.min_pile_pct];
 }
-const sieveName = (v) => { const k = sieves().find((x) => Math.abs(+x - +v) < 1e-9); return k ? `${lab(k)[0]} (${lab(k)[1]})` : `${v} mm`; };
-const unitLabel = () => (S.an?.conv === 62.4 ? "lb/ft³" : "kg/m³");
-const trialById = (id) => (S.mix.trials || []).find((t) => t.id === id);
-const anTrial = (id) => (S.an?.trials || []).find((t) => t.id === id);
-const tested = () => (S.an?.trials || []).filter((t) => t.volumetrics?.complete);
-
+const tolVMA = () => num(S.mix.targets?.vma_tol) ?? 0.3;
 /* number input used everywhere */
 function numInput(path, opts = {}) {
   const v = getPath(S.mix, path);
@@ -176,37 +212,36 @@ async function copyGrid(tableSel) {
 function edit(path, value) { setPath(S.mix, path, value); changed(); }
 function changed(opts = {}) {
   S.mix.modified_local = Date.now();
-  $("#savestate").textContent = "Unsaved changes";
+  const ss = $("#savestate"); if (ss) ss.textContent = "Unsaved changes";
   clearTimeout(changed._s); changed._s = setTimeout(save, 1200);
   clearTimeout(changed._a); changed._a = setTimeout(analyze, opts.now ? 0 : 280);
 }
 async function saveNow() {
   clearTimeout(changed._s);
-  const b = $("#save-now"); b.disabled = true;
   await save();
-  b.disabled = false;
-  if (/^Saved/.test($("#savestate").textContent)) toast(`Saved to ${S.file}`);
+  if (/^Saved/.test($("#savestate")?.textContent || "")) toast(S.meta.web ? "Saved in this browser" : `Saved to ${S.file}`);
 }
 async function save() {
   if (!S.mix) return;
+  const ss = $("#savestate");
   try {
-    $("#savestate").textContent = "Saving…";
+    if (ss) ss.textContent = "Saving…";
     const r = await api("/api/save", { file: S.file, mix: S.mix });
     S.file = r.file;
-    $("#savestate").textContent = "Saved " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch (e) { $("#savestate").textContent = "Not saved: " + e.message; }
+    if ($("#savestate")) $("#savestate").textContent = "Saved " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (e) { if ($("#savestate")) $("#savestate").textContent = "Not saved: " + e.message; }
 }
 async function analyze() {
   if (!S.mix) return;
+  if (S.beforeAnalyze) S.beforeAnalyze();
   try { S.an = await api("/api/analyze", { mix: S.mix }); }
   catch (e) { S.an = null; console.error(e); }
-  if (!S.selTrial || !trialById(S.selTrial)) S.selTrial = S.mix.trials?.length ? S.mix.trials[S.mix.trials.length - 1].id : null;
-  updateTopbar();
-  (UPDATE[S.step] || (() => {}))();
-  renderSide();
+  updateTopbar(); updateTabs();
+  if (S.refresh) S.refresh();
 }
+async function analyzeQuiet() { try { S.an = await api("/api/analyze", { mix: S.mix }); } catch (e) { S.an = null; } }
 
-/* ---------------------------------------------------------------- boot and home */
+/* ---------------------------------------------------------------- boot */
 async function boot() {
   try { S.meta = await api("/api/meta"); }
   catch (e) {
@@ -214,62 +249,145 @@ async function boot() {
     $("#app").append(h("div", { class: "boot" }, h("h1", {}, "Could not start"), h("p", { class: "err" }, e.message), h("button", { class: "btn", onclick: () => location.reload() }, "Reload")));
     return;
   }
-  $("#go-home").addEventListener("click", () => { if (S.mix) save(); home(); });
-  $("#save-now").addEventListener("click", saveNow);
   document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); if (S.mix) saveNow(); } });
   home();
 }
 
+/* ---------------------------------------------------------------- top bar and tabs */
+function updateTopbar() {
+  const bar = $("#topbar"); if (!bar) return;
+  bar.innerHTML = "";
+  bar.append(h("button", { class: "brand", title: "All mixes", onclick: () => { if (S.mix) save(); home(); } },
+    h("svg", { viewBox: "0 0 40 24", "aria-hidden": "true", html: '<path d="M2 21 C12 20 18 6 38 3"/><circle cx="15" cy="13.6" r="2.4"/>' }), h("span", {}, "Bailey Design Trials")));
+  if (S.mix) {
+    const tg = S.mix.targets || {};
+    bar.append(h("span", { class: "sep" }), h("span", { class: "mixname" }, S.mix.name || "Untitled mix"),
+      h("span", { class: "chips" },
+        h("span", { class: "chip" }, `Target VMA ${num(tg.vma) != null ? fmt(tg.vma, 1) + "%" : "not set"}`),
+        h("span", { class: "chip" }, `Target Va ${num(tg.va) != null ? fmt(tg.va, 1) + "%" : "not set"}`),
+        h("span", { class: "chip" }, `${typeLabel()}${S.an?.nmas ? ", " + S.an.nmas + " mm" : ""}`)));
+  }
+  bar.append(h("span", { class: "spacer" }),
+    h("button", { class: "toplink", onclick: () => { S.tab = "reference"; S.mix ? render() : renderReferencePage(); } }, "Bailey reference"));
+  if (S.mix) bar.append(h("span", { class: "savestate", id: "savestate", "aria-live": "polite" }), h("button", { class: "btn small ghost", onclick: saveNow, title: "Save now (Ctrl+S)" }, "Save"));
+}
+const TABS = [["stockpiles", "Stockpiles"], ["criteria", "Criteria"], ["trials", "Trials"], ["compare", "Compare"]];
+function tabNote(k) {
+  if (k === "stockpiles") { const n = readySlots().length; return n ? `${n} in use` : "add yours"; }
+  if (k === "criteria") return num(S.mix.targets?.vma) != null && num(S.mix.targets?.va) != null ? "targets set" : "set targets";
+  if (k === "trials") {
+    const T = S.mix.trials || [];
+    if (!T.length) return "none yet";
+    const t = T.filter((x) => isTested(x.id)).length;
+    return `${t} tested${T.length - t ? `, ${T.length - t} planned` : ""}`;
+  }
+  return testedAn().length >= 2 ? "all trials, export" : "after 2 tests";
+}
+function tabsBar() {
+  return h("nav", { class: "tabs", id: "tabs", "aria-label": "Design steps" }, TABS.map(([k, t], i) =>
+    h("button", { class: "tab", "aria-current": S.tab === k ? "page" : null, onclick: () => { S.tab = k; render(); } },
+      h("b", {}, i + 1), h("span", { class: "tt" }, t), h("span", { class: "tn", id: "tn-" + k }, tabNote(k)))));
+}
+function updateTabs() { TABS.forEach(([k]) => { const e = $("#tn-" + k); if (e) e.textContent = tabNote(k); }); }
+
+function render() {
+  S.refresh = null; S.beforeAnalyze = null;
+  const app = $("#app"); app.innerHTML = "";
+  updateTopbar();
+  if (S.tab === "reference") { app.append(renderReference()); return; }
+  app.append(tabsBar());
+  const page = h("div", { class: "page" });
+  app.append(page);
+  ({ stockpiles: renderStockpiles, criteria: renderCriteria, trials: renderTrials, compare: renderCompare })[S.tab](page);
+  if (S.refresh && !S.refresh.isRender) S.refresh();
+}
+
+/* ---------------------------------------------------------------- home */
 function aboutBlock() {
   return h("footer", { class: "about" },
     h("p", {}, h("b", {}, "Bailey Design Trials. "), "Developed by Akash Bajaj, Illinois Center for Transportation, University of Illinois Urbana-Champaign. ",
       h("a", { href: "https://github.com/100akash/bailey-design-trials", target: "_blank", rel: "noopener" }, "Source code and instructions"), ", MIT License."),
     h("p", {}, "Method: Vavrik, W.R., Huber, G., Pine, W.J., Carpenter, S.H., and Bailey, R. (2002). ",
       h("a", { href: "https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf", target: "_blank", rel: "noopener" }, h("i", {}, "Bailey Method for Gradation Selection in HMA Mixture Design")),
-      ". Transportation Research Circular E-C044, Transportation Research Board."),
+      ". Transportation Research Circular E-C044, Transportation Research Board. Typical values follow current Bailey Method course practice (2023)."),
     h("p", { class: "disclaimer" }, "Predictions use rules of thumb and are estimates only. Confirm every trial in the lab. This tool is not endorsed by the FAA or by any Bailey Method course."));
 }
 async function home() {
-  S.mix = null; S.file = null; S.an = null; S.suggestion = null;
-  $("#mixbar").hidden = true; $("#save-now").hidden = true; $("#savestate").textContent = "";
+  S.mix = null; S.file = null; S.an = null; S.live = {}; S.sugg = {}; S.addedSlots = {}; S.refresh = null;
+  updateTopbar();
   const list = await api("/api/mixes");
   const app = $("#app"); app.innerHTML = "";
   const nameIn = h("input", { type: "text", placeholder: "e.g. P-401 Mix A to SMA 12.5", "aria-label": "Mix name" });
+  const typeSel = h("select", { "aria-label": "Mix type" }, TYPE_KEYS.map(([v, t]) => h("option", { value: v }, t)));
+  const nmasSel = h("select", { "aria-label": "NMAS" }, h("option", { value: "" }, "Detect from Trial 1"), NMAS_KEYS.map((v) => h("option", { value: v, selected: v === "12.5" ? true : null }, `${v} mm`)));
   const create = async () => {
     const name = nameIn.value.trim();
     if (!name) { nameIn.focus(); toast("Give the mix a name first"); return; }
-    const mix = newMix(await uniqueName(name));
+    const mix = newMix(await uniqueName(name), typeSel.value, num(nmasSel.value));
     const r = await api("/api/save", { mix });
-    openMix(r.file);
+    openMix(r.file, "stockpiles");
   };
   nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") create(); });
+  const steps = [["Stockpiles", "Gradations, Gsb, absorption, unit weights."], ["Criteria", "Mix type, VMA and air-void targets, limits."], ["Trials", "Test, review, plan the next one."], ["Compare", "All trials side by side, prediction accuracy."]];
   app.append(h("div", { class: "home" },
     h("section", {},
-      h("h1", {}, "Mix designs"),
-      h("p", { class: "lede" }, "Design SMA blends by volume with the Bailey Method. Enter your stockpiles, log each lab trial, and let the tool propose the next blend to try."),
+      h("h1", {}, "Design trials from the stockpiles you have"),
+      h("p", { class: "lede" }, "For SMA and dense-graded mixes, 4.75 to 37.5 mm. Enter your stockpiles and targets once. Then each round goes: test a trial, review it, and let the tool plan the next blend and binder. It does the work of the Bailey volume blending and VMA estimation spreadsheets in one place."),
+      h("ol", { class: "flow" }, steps.map(([t, d], i) => h("li", {}, h("b", {}, i + 1), h("span", { class: "t" }, t), h("span", { class: "d" }, d)))),
+      h("h2", {}, "Your mixes"),
       h("div", { class: "ledger" },
         list.length ? list.map((m) => h("button", { class: "ledger-row", onclick: () => openMix(m.file) },
-          h("div", {}, h("div", { class: "nm" }, m.name), h("div", { class: "sub" }, `${m.file}, edited ${new Date(m.modified * 1000).toLocaleString()}`)),
-          h("div", { class: "count" }, `${m.materials ?? 0} materials`),
-          h("div", { class: "count" }, `${m.tested ?? 0} of ${m.trials ?? 0} trials tested`))) :
-          h("div", { class: "empty" }, "No mixes yet. Create your first one on the right."))),
+          h("span", {}, h("span", { class: "nm" }, m.name), h("span", { class: "sub" }, `${S.meta.web ? "" : m.file + ", "}edited ${new Date(m.modified * 1000).toLocaleString()}`)),
+          h("span", { class: "count" }, `${m.materials ?? 0} stockpiles`),
+          h("span", { class: "count" }, `${m.tested ?? 0} of ${m.trials ?? 0} trials tested`))) :
+          h("div", { class: "empty" }, "No mixes yet. Start one on the right."))),
     h("aside", { class: "newmix" },
       h("h2", {}, "Start a new mix"),
       h("label", { class: "f" }, h("span", {}, "Mix name"), nameIn),
+      h("div", { class: "fgrid two", style: "margin-top:12px" }, h("label", { class: "f" }, h("span", {}, "Mix type"), typeSel), h("label", { class: "f" }, h("span", {}, "NMAS"), nmasSel)),
+      h("p", { class: "hint" }, "Typical Bailey values and rules of thumb for the type load automatically. You can change them in Criteria."),
       h("div", { class: "row", style: "margin-top:14px" }, h("button", { class: "btn primary", onclick: create }, "Create mix"),
         h("button", { class: "btn", onclick: openMixFile, title: "Open a .json mix file downloaded from this tool" }, "Open a mix file")),
       h("p", { class: "hint", style: "margin-top:16px" }, S.meta.web
-        ? "Your mixes are saved in this browser only. Nothing is sent anywhere. Use Download mix file to keep a copy or share it, and Open a mix file to load one."
-        : `Mixes are saved as files in ${S.meta.mixes_folder}. You can copy materials from any saved mix once it is open.`)),
+        ? "Your mixes are saved in this browser only. Nothing is uploaded. Use Download mix file now and then to keep a copy or to share it."
+        : `Mixes are saved as files in ${S.meta.mixes_folder}.`)),
     S.meta.web ? aboutBlock() : null));
   nameIn.focus();
 }
-
+function renderReferencePage() {
+  const app = $("#app"); app.innerHTML = ""; updateTopbar();
+  app.append(renderReference());
+}
+function newMix(name, type = "sma", nmas = null) {
+  const materials = {};
+  S.meta.slots.forEach((s) => (materials[s] = { name: "", grad: {}, gsb: null, abs: null, luw: null, ruw: null }));
+  return {
+    schema: 2, name, notes: "", created: new Date().toISOString(),
+    settings: { mix_type: type, gb: 1.03, fiber_pct: type === "sma" ? 0.3 : null, fiber_type: type === "sma" ? "Cellulose" : "", units: "auto", nmas_override: nmas },
+    targets: { vma: null, va: null, vfa: [null, null], pb_min: null, vcadrc: null, vma_tol: 0.3 },
+    bailey_ranges: null, rot_override: {}, control_points: {}, materials, trials: [],
+    search: { min_pile_pct: 5, min_fillers: false, one_fine: true, lock_small_fillers: true },
+  };
+}
+async function openMix(file, tab) {
+  const r = await api("/api/mix?file=" + encodeURIComponent(file));
+  S.file = r.file; S.mix = r.mix; S.live = {}; S.sugg = {}; S.addedSlots = {};
+  const m = S.mix;
+  m.trials = m.trials || []; m.settings = m.settings || {}; m.targets = m.targets || {}; m.control_points = m.control_points || {};
+  if (!m.settings.mix_type || m.settings.mix_type === "SMA") m.settings.mix_type = "sma";
+  await analyzeQuiet();
+  const last = m.trials[m.trials.length - 1];
+  S.sel = last ? last.id : null;
+  S.sub = last && isTested(last.id) ? "results" : "blend";
+  S.tab = tab || (readySlots().length < 2 ? "stockpiles" : "trials");
+  render();
+}
 function downloadMix() {
   if (!S.mix) return;
   const blob = new Blob([JSON.stringify(S.mix, null, 1)], { type: "application/json" });
   const a = h("a", { href: URL.createObjectURL(blob), download: (S.file || (S.mix.name || "mix") + ".json") });
   document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  S.mix.last_download = new Date().toISOString(); changed();
 }
 async function deleteMix() {
   if (!S.mix || !confirm(`Delete "${S.mix.name}"? ${S.meta.web ? "Download it first if you may want it back." : "A copy is kept in the mixes/_history folder."}`)) return;
@@ -298,228 +416,98 @@ function openMixFile() {
   document.body.append(inp); inp.click();
 }
 
-function newMix(name) {
-  const materials = {};
-  S.meta.slots.forEach((s) => (materials[s] = { name: "", grad: {}, gsb: null, abs: null, luw: null, ruw: null }));
-  return {
-    schema: 1, name, notes: "", created: new Date().toISOString(),
-    settings: { mix_type: "SMA", gb: 1.03, fiber_pct: 0.3, fiber_type: "Cellulose", units: "auto", nmas_override: null },
-    targets: { vma: null, va: null, vfa: [null, null], pb_min: null, vcadrc: null },
-    bailey_ranges: null, rot: { ...S.meta.rot }, control_points: {}, materials, trials: [],
+/* ---------------------------------------------------------------- 1 Stockpiles */
+function renderStockpiles(page) {
+  if (!usedSlots().length) ["CA1", "CA2", "FA1", "F1"].forEach((s) => (S.addedSlots[s] = true));
+  const slots = usedSlots();
+  const main = h("section", { class: "main" }), side = h("section", { class: "below" });
+  page.append(main, side);
+  const t = mixType();
+  main.append(h("div", { class: "head" },
+    h("div", {}, h("h1", {}, "Stockpiles"),
+      h("p", { class: "intro" }, `The aggregates you have to work with. Washed gradations as % passing. For ${typeLabel()}, coarse piles need ${uwKey().toUpperCase()} and fine piles need ${faUwKey().toUpperCase()}.`)),
+    h("div", { class: "row" }, h("button", { class: "btn", onclick: pasteTableDialog }, "Paste from Excel"), h("button", { class: "btn", onclick: importDialog }, "Copy from another mix"))));
+  const addMenu = h("div", { class: "addcol" },
+    h("span", { class: "lbl" }, "Add stockpile"),
+    ["CA", "FA", "F"].map((k) => {
+      const free = S.meta.slots.find((s) => S.meta.kind[s] === k && !slots.includes(s));
+      return h("button", { class: "btn link", disabled: free ? null : true, onclick: () => { S.addedSlots[free] = true; render(); } }, KIND_NAMES[k].toLowerCase());
+    }));
+  const head = h("tr", {}, h("th", { class: "rowh" }, "Sieve"),
+    slots.map((s, c) => h("th", { class: "pilehead", style: `--k:${slotColor(s)}` },
+      h("span", { class: "kind" }, SLOT_NAMES[s],
+        h("button", { class: "x", title: "Remove this stockpile", "aria-label": `Remove ${matName(s)}`, onclick: () => removePile(s) }, "×")),
+      textInput(["materials", s, "name"], { placeholder: "Name", label: SLOT_NAMES[s] + " name", grid: [-1, c, "mat"], cls: "pname" }))),
+    h("th", { class: "addhead" }, addMenu));
+  const body = h("tbody", {});
+  sieves().forEach((sv, r) => body.append(h("tr", {}, h("th", { class: "rowh" }, lab(sv)[0], h("small", {}, lab(sv)[1])),
+    slots.map((s, c) => h("td", {}, numInput(["materials", s, "grad", sv], { grid: [r, c, "mat"] }))), h("td", { class: "addcell" }))));
+  const props = [["gsb", "Gsb", ""], ["abs", "Absorption, %", ""], ["luw", "Loose unit weight", "uw"], ["ruw", "Rodded unit weight", "uw"]];
+  props.forEach(([k, tl, uw], i) => body.append(h("tr", { class: i === 0 ? "first" : null }, h("th", { class: "rowh" }, tl, uw ? h("small", {}, unitLabel()) : null),
+    slots.map((s, c) => (uw && S.meta.kind[s] === "F") ? h("td", { class: "na", title: "Not used for fillers" }) : h("td", {}, numInput(["materials", s, k], { grid: [20 + i, c, "mat"] }))), h("td", { class: "addcell" }))));
+  [["luw_voids", "Loose voids, %"], ["ruw_voids", "Rodded voids, %"], ["pcs", "Passing the PCS, %"]].forEach(([k, tl], i) =>
+    body.append(h("tr", { class: "calcrow" + (i === 0 ? " first" : "") }, h("th", { class: "rowh" }, tl, h("small", {}, "calculated")), slots.map((s) => h("td", { class: "calc", id: `chk-${k}-${s}` }, "-")), h("td", { class: "addcell" }))));
+  main.append(h("div", { class: "gridwrap" }, h("table", { class: "grid mat", id: "mat-grid" }, h("thead", {}, head), body)),
+    h("div", { class: "row note" }, h("button", { class: "btn small", onclick: () => copyGrid("#mat-grid") }, "Copy table for Excel"),
+      h("span", { class: "hint" }, "Click a cell and paste a block from Excel. Sieve labels and a row of names are recognised.")),
+    h("div", { id: "mat-notes" }));
+  S.refresh = () => {
+    const typ = { CA: { luw: [43, 49], ruw: [37, 43] }, FA: { luw: [35, 43], ruw: [28, 36] } };
+    const pcs = S.an?.control?.coarse_pcs;
+    slots.forEach((s) => {
+      const info = S.an?.materials?.[s] || {}, kind = S.meta.kind[s];
+      ["luw", "ruw"].forEach((k) => {
+        const cell = $(`#chk-${k}_voids-${s}`); if (!cell) return;
+        const v = info[k + "_voids"]; cell.textContent = fmt(v, 1); cell.className = "calc";
+        if (v != null && typ[kind]) cell.classList.add(v < typ[kind][k][0] || v > typ[kind][k][1] ? "st-high" : "st-ok");
+        cell.title = typ[kind] ? `Typical ${typ[kind][k][0]} to ${typ[kind][k][1]}%` : "";
+      });
+      const c = $(`#chk-pcs-${s}`); if (!c) return;
+      const g = num(S.mix.materials[s]?.grad?.[pcs != null ? allSieves().find((x) => Math.abs(+x - pcs) < 1e-9) : ""]);
+      c.className = "calc";
+      if (pcs && g != null) {
+        c.textContent = fmt(g, 1);
+        const wrong = (kind === "CA" && g >= 50) || (kind === "FA" && g < 50);
+        if (kind !== "F") c.classList.add(wrong ? "st-high" : "st-ok");
+        c.title = `PCS ${pcs} mm. Coarse piles pass less than 50%.`;
+      } else c.textContent = pcs ? "-" : "set NMAS";
+    });
+    const notes = $("#mat-notes");
+    if (notes) {
+      notes.innerHTML = "";
+      const msg = [];
+      slots.forEach((s) => {
+        const m = S.mix.materials[s]; if (!(m?.name || "").trim()) return;
+        const k = S.meta.kind[s];
+        const miss = sieves().filter((sv) => num(m.grad?.[sv]) == null && +sv <= 25);
+        if (miss.length) msg.push(`${m.name}: gradation missing on ${miss.length} sieve${miss.length > 1 ? "s" : ""}.`);
+        if (!num(m.gsb)) msg.push(`${m.name}: needs Gsb.`);
+        if (k === "CA" && !num(m[uwKey()])) msg.push(`${m.name}: needs ${uwKey().toUpperCase()}. It sets the coarse volume.`);
+        if (k === "FA" && !num(m[faUwKey()])) msg.push(`${m.name}: needs ${faUwKey().toUpperCase()}. It sets how the fines fill the coarse voids.`);
+      });
+      if (msg.length) notes.append(h("div", { class: "notice" }, h("b", {}, "Still needed"), h("ul", {}, msg.map((x) => h("li", {}, x)))));
+    }
+    side.innerHTML = "";
+    const series = readySlots().map((s) => ({ name: matName(s), grad: S.mix.materials[s].grad, color: slotColor(s), cls: "pile" }));
+    side.append(h("div", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "Stockpile gradations"), scaleToggle()),
+      chartBox(gradChart({ series, nmas: S.an?.nmas, cps: {} }), series),
+      h("p", { class: "caption" }, S.an?.nmas ? `Dashed lines mark the Bailey control sieves for ${S.an.nmas} mm. The shaded side is the coarse fraction.` : "The Bailey control sieves appear once the NMAS is set in Criteria or by Trial 1.")),
+      h("div", { class: "card" }, h("h2", {}, "Values on the chart"), gradTable(series, null)));
   };
 }
-
-async function openMix(file) {
-  const r = await api("/api/mix?file=" + encodeURIComponent(file));
-  S.file = r.file; S.mix = r.mix; S.suggestion = null; S.proposal = null; S.locks = {};
-  S.mix.trials = S.mix.trials || [];
-  S.step = S.mix.trials.length ? "trials" : (readySlotsRaw(S.mix).length ? "trials" : "setup");
-  S.selTrial = S.mix.trials.length ? S.mix.trials[S.mix.trials.length - 1].id : null;
-  await analyzeQuiet();
-  renderWork();
+function removePile(s) {
+  const m = S.mix.materials[s] || {};
+  const used = (S.mix.trials || []).some((t) => (num(t.pct?.[s]) || 0) > 0);
+  if ((m.name || "").trim() && !confirm(`Remove ${m.name}?${used ? " Trials that use it will no longer total 100%." : ""}`)) return;
+  S.mix.materials[s] = { name: "", grad: {}, gsb: null, abs: null, luw: null, ruw: null };
+  delete S.addedSlots[s];
+  changed({ now: true }); render();
 }
-function readySlotsRaw(mix) { return Object.values(mix.materials || {}).filter((m) => (m.name || "").trim()); }
-async function analyzeQuiet() { try { S.an = await api("/api/analyze", { mix: S.mix }); } catch (e) { S.an = null; } }
-
-function updateTopbar() {
-  $("#mixbar").hidden = false; $("#save-now").hidden = false;
-  $("#mix-title").textContent = S.mix.name;
-  $("#units-chip").textContent = unitLabel() + (S.mix.settings.units === "auto" ? " (auto)" : "");
-  $("#nmas-chip").textContent = S.an?.nmas ? `${S.an.nmas} mm NMAS` : "NMAS from trial 1";
-}
-
-/* ---------------------------------------------------------------- workspace */
-const STEPS = [
-  ["setup", "Mix setup", "Targets and limits"],
-  ["materials", "Materials", "Stockpiles and properties"],
-  ["trials", "Trials", "Blends and lab results"],
-  ["next", "Next trial", "Proposed blend"],
-];
-function renderWork() {
-  const app = $("#app"); app.innerHTML = "";
-  const nav = h("nav", { class: "steps", "aria-label": "Design steps" },
-    STEPS.map(([k, t, sub], i) => h("button", { class: "step", "aria-current": S.step === k ? "true" : "false", onclick: () => { S.step = k; renderWork(); } },
-      h("b", {}, i + 1), h("span", {}, t), h("small", {}, sub))),
-    h("button", { class: "btn small back", onclick: () => { save(); home(); } }, "All mixes"),
-    h("div", { class: "navtools" },
-      h("button", { class: "btn link", onclick: downloadMix, title: "Save a copy of this mix as a .json file" }, "Download mix file"),
-      h("button", { class: "btn link danger", onclick: deleteMix }, "Delete mix")));
-  const pane = h("section", { class: "pane", id: "pane" });
-  const side = h("aside", { class: "side", id: "side", "aria-label": "Charts" });
-  app.append(h("div", { class: "work" + (S.step === "materials" ? " wide" : "") }, nav, pane, side));
-  updateTopbar();
-  ({ setup: renderSetup, materials: renderMaterials, trials: renderTrials, next: renderNext })[S.step](pane);
-  (UPDATE[S.step] || (() => {}))();
-  renderSide();
-}
-const UPDATE = {};
-
-/* ---------------------------------------------------------------- step 1: setup */
-function renderSetup(p) {
-  const m = S.mix;
-  p.append(h("h2", {}, "Mix setup"),
-    h("p", { class: "intro" }, "Every mix has its own targets. Nothing here is fixed by a specification. Leave a field blank to ignore it."));
-  const nmasSel = h("select", { "aria-label": "NMAS" },
-    h("option", { value: "" }, "Detect from trial 1"),
-    ["25.0", "19.0", "12.5", "9.5", "4.75"].map((v) => h("option", { value: v, selected: String(m.settings.nmas_override ?? "") === v ? true : null }, `${v} mm`)));
-  nmasSel.addEventListener("change", () => edit(["settings", "nmas_override"], num(nmasSel.value)));
-  const unitSel = h("select", { "aria-label": "Units" },
-    [["auto", "Detect from unit weights"], ["metric", "Metric (kg/m³)"], ["english", "English (lb/ft³)"]].map(([v, t]) => h("option", { value: v, selected: m.settings.units === v ? true : null }, t)));
-  unitSel.addEventListener("change", () => edit(["settings", "units"], unitSel.value));
-
-  p.append(h("h3", {}, "Mix"),
-    h("div", { class: "fgrid wide" },
-      h("label", { class: "f" }, h("span", {}, "Mix name"), (() => { const i = textInput(["name"]); i.addEventListener("input", updateTopbar); return i; })()),
-      h("label", { class: "f" }, h("span", {}, "Nominal max aggregate size"), nmasSel, h("span", { class: "hint", id: "nmas-hint" })),
-      h("label", { class: "f" }, h("span", {}, "Units"), unitSel)),
-    h("div", { class: "fgrid", style: "margin-top:12px" },
-      h("label", { class: "f" }, h("span", {}, "Binder Gb"), numInput(["settings", "gb"])),
-      h("label", { class: "f" }, h("span", {}, "Fiber, % of total mix"), numInput(["settings", "fiber_pct"])),
-      h("label", { class: "f" }, h("span", {}, "Fiber type"), textInput(["settings", "fiber_type"]))),
-    h("p", { class: "hint" }, "Fibers are recorded with the mix. They are not part of the volumetric calculations."),
-    h("label", { class: "f", style: "margin-top:12px;max-width:900px" }, h("span", {}, "Notes"),
-      (() => { const t = h("textarea", { rows: 2 }); t.value = m.notes || ""; t.addEventListener("input", () => edit(["notes"], t.value)); return t; })()));
-
-  p.append(h("h3", {}, "Volumetric targets", h("small", {}, "The next-trial search aims for these")),
-    h("div", { class: "fgrid" },
-      h("label", { class: "f" }, h("span", {}, "VMA, %"), numInput(["targets", "vma"], { placeholder: "e.g. 17.0" })),
-      h("label", { class: "f" }, h("span", {}, "Air voids, %"), numInput(["targets", "va"], { placeholder: "e.g. 3.5" })),
-      h("label", { class: "f" }, h("span", {}, "VFA min, %"), numInput(["targets", "vfa", 0])),
-      h("label", { class: "f" }, h("span", {}, "VFA max, %"), numInput(["targets", "vfa", 1])),
-      h("label", { class: "f" }, h("span", {}, "Min binder, %"), numInput(["targets", "pb_min"])),
-      h("label", { class: "f" }, h("span", {}, "VCA dry-rodded, %"), numInput(["targets", "vcadrc"], { placeholder: "optional" }))),
-    h("p", { class: "hint" }, "Leave VCA dry-rodded blank until you measure it. Once entered, VCAmix must stay at or below it."));
-
-  // Bailey ranges
-  p.append(h("h3", {}, "Bailey ranges", h("small", {}, "Soft goals for the search. Pre-filled with typical SMA ranges. Edit them for your mix.")));
-  const rt = h("table", { class: "grid" },
-    h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Principle"), h("th", {}, "Min"), h("th", {}, "Max"), h("th", {}, "Default"))),
-    h("tbody", { id: "ranges-body" }));
-  p.append(h("div", { class: "gridwrap", style: "max-width:560px" }, rt),
-    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn small", onclick: () => { S.mix.bailey_ranges = null; changed({ now: true }); setTimeout(() => renderWork(), 350); } }, "Reset to defaults"),
-      h("span", { class: "hint" }, "Clear a box to let the search ignore that limit.")));
-
-  // Control points
-  p.append(h("h3", {}, "Gradation limits", h("small", {}, "Optional. Control points are hard. Soft targets are goals the search leans toward.")));
-  const cp = h("table", { class: "grid" },
-    h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Sieve"), h("th", {}, "Control min"), h("th", {}, "Control max"), h("th", { class: "softh" }, "Soft min"), h("th", { class: "softh" }, "Soft max"))),
-    h("tbody", {}, sieves().map((s, r) => h("tr", {},
-      h("th", { class: "rowh" }, lab(s)[0], h("small", {}, lab(s)[1])),
-      h("td", {}, numInput(["control_points", s, "min"], { grid: [r, 0, "cp"] })),
-      h("td", {}, numInput(["control_points", s, "max"], { grid: [r, 1, "cp"] })),
-      h("td", { class: "soft" }, numInput(["control_points", s, "soft_min"], { grid: [r, 2, "cp"] })),
-      h("td", { class: "soft" }, numInput(["control_points", s, "soft_max"], { grid: [r, 3, "cp"] }))))));
-  p.append(h("div", { class: "gridwrap", style: "max-width:640px" }, cp),
-    h("p", { class: "hint" }, "Example: soft min 22 and soft max 24 on 2.36 mm (#8). The search tries to land there, but it will miss it before it breaks a control point or the VMA target. Tip: copy columns from Excel and paste into the first box."));
-
-  // practical limits
-  const pr = practicalUI(true);
-  const fcb = h("input", { type: "checkbox", checked: pr.min_fillers ? true : null });
-  fcb.addEventListener("change", () => edit(["search", "min_fillers"], fcb.checked));
-  const ocb = h("input", { type: "checkbox", checked: pr.one_fine ? true : null });
-  ocb.addEventListener("change", () => edit(["search", "one_fine"], ocb.checked));
-  p.append(h("h3", {}, "Practical limits", h("small", {}, "What the plant can actually feed")),
-    h("div", { class: "fgrid" },
-      h("label", { class: "f" }, h("span", {}, "Minimum stockpile %, when used"), numInput(["search", "min_pile_pct"], { placeholder: "none" }))),
-    h("div", { class: "checks" },
-      h("label", { class: "hardbox" }, fcb, h("span", {}, "Apply the minimum to fillers too")),
-      h("label", { class: "hardbox" }, ocb, h("span", {}, "Prefer one fine aggregate (soft). The search uses two only when it clearly helps."))),
-    h("p", { class: "hint" }, "A stockpile is either off (0%) or at least the minimum. Fillers are exempt unless ticked, so 1% lime still works. Fixed stockpiles are left alone. Clear the box for no minimum."));
-
-  // rules of thumb
-  const rotRows = [["PCS", "% passing PCS for 1% VMA"], ["CA", "CA ratio change for 1% VMA"], ["FAc", "FAc change for 1% VMA"], ["FAf", "FAf change for 1% VMA"], ["FAc_dip", "FAc dip"], ["FAf_dip", "FAf dip"], ["AC", "Binder mass to volume factor"], ["pba_abs", "Pba as fraction of water absorption"]];
-  p.append(h("details", { class: "adv" }, h("summary", {}, "Prediction factors (SMA rules of thumb)"),
-    h("p", { class: "hint" }, "These drive the VMA and voids estimate. Change them only after several trials show a steady bias."),
-    h("div", { class: "fgrid wide" }, rotRows.map(([k, t]) => h("label", { class: "f" }, h("span", {}, t), numInput(["rot", k])))),
-    h("div", { class: "row", style: "margin-top:10px" }, h("button", { class: "btn small", onclick: () => { S.mix.rot = { ...S.meta.rot }; changed({ now: true }); renderWork(); } }, "Reset factors"))));
-}
-UPDATE.setup = () => {
-  const nh = $("#nmas-hint"); if (nh) nh.textContent = S.an?.nmas ? `In use: ${S.an.nmas} mm (Half ${S.an.control.half}, PCS ${S.an.control.pcs}, SCS ${S.an.control.scs}, TCS ${S.an.control.tcs})` : "Enter trial 1 to detect it.";
-  const body = $("#ranges-body"); if (!body || body.dataset.built) return;
-  body.dataset.built = "1";
-  const def = S.an?.default_ranges || { ca_ruw: [110, 125], CA: [null, null], FAc: [0.6, 0.85], FAf: [0.65, 0.9] };
-  if (!S.mix.bailey_ranges) S.mix.bailey_ranges_view = JSON.parse(JSON.stringify(def));
-  const cur = () => S.mix.bailey_ranges || S.mix.bailey_ranges_view;
-  [["ca_ruw", "% CA RUW"], ["CA", "CA ratio"], ["FAc", "FAc ratio"], ["FAf", "FAf ratio"]].forEach(([k, t], r) => {
-    const mk = (i) => {
-      const inp = h("input", { type: "text", inputmode: "decimal", value: cur()[k]?.[i] ?? "" });
-      inp.addEventListener("input", () => {
-        if (!S.mix.bailey_ranges) S.mix.bailey_ranges = JSON.parse(JSON.stringify(cur()));
-        S.mix.bailey_ranges[k] = S.mix.bailey_ranges[k] || [null, null];
-        S.mix.bailey_ranges[k][i] = num(inp.value); changed();
-      });
-      return inp;
-    };
-    body.append(h("tr", {}, h("th", { class: "rowh" }, t), h("td", {}, mk(0)), h("td", {}, mk(1)), h("td", { class: "calc" }, def[k][0] == null ? "-" : `${def[k][0]} to ${def[k][1]}`)));
-  });
-};
-
-/* ---------------------------------------------------------------- step 2: materials */
-function renderMaterials(p) {
-  p.append(h("div", { class: "row" }, h("h2", {}, "Materials"), h("span", { class: "spacer" }),
-    h("button", { class: "btn small primary", onclick: pasteTableDialog }, "Paste a table from Excel"),
-    h("button", { class: "btn small", onclick: importDialog }, "Import from another mix")),
-    h("p", { class: "intro" }, "Washed gradations as % passing. Coarse aggregates need RUW for SMA, fine aggregates need LUW. Copy any block in Excel, click the cell where it should start, and paste. Sieve labels and a row of names are recognised."));
-  const slots = S.meta.slots;
-  const head = h("tr", {}, h("th", { class: "rowh" }, "Stockpile"),
-    slots.map((s, c) => h("th", { class: "kind-" + S.meta.kind[s], style: `--k:${slotColor(s)}` }, h("span", { class: "slotlabel" }, h("i", { class: "sw" }), SLOT_NAMES[s]), textInput(["materials", s, "name"], { placeholder: "Name", label: SLOT_NAMES[s] + " name", grid: [-1, c, "mat"] }))));
-  const body = h("tbody", {});
-  sieves().forEach((sv, r) => body.append(h("tr", {}, h("th", { class: "rowh", id: "mrow-" + r }, lab(sv)[0], h("small", {}, lab(sv)[1])),
-    slots.map((s, c) => h("td", {}, numInput(["materials", s, "grad", sv], { grid: [r, c, "mat"] }))))));
-  const props = [["gsb", "Bulk specific gravity, Gsb"], ["abs", "Water absorption, %"], ["luw", "Loose unit weight", true], ["ruw", "Rodded unit weight", true]];
-  body.append(h("tr", { class: "group" }, h("th", { colspan: 9 }, "Properties")));
-  props.forEach(([k, t, uw], i) => body.append(h("tr", {}, h("th", { class: "rowh" }, t, uw ? h("small", { class: "uwunit" }, "") : null),
-    slots.map((s, c) => (uw && S.meta.kind[s] === "F") ? h("td", { class: "na", title: "Not used for fillers" }) : h("td", {}, numInput(["materials", s, k], { grid: [20 + i, c, "mat"] }))))));
-  body.append(h("tr", { class: "group" }, h("th", { colspan: 9 }, "Checks")));
-  [["luw_voids", "LUW voids, %"], ["ruw_voids", "RUW voids, %"], ["pcs", "Passing the PCS, %"]].forEach(([k, t]) =>
-    body.append(h("tr", {}, h("th", { class: "rowh" }, t), slots.map((s) => h("td", { class: "calc", id: `chk-${k}-${s}` }, "-")))));
-  p.append(h("div", { class: "gridwrap" }, h("table", { class: "grid", id: "mat-grid" }, h("thead", {}, head), body)),
-    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn small", onclick: () => copyGrid("#mat-grid") }, "Copy table for Excel")),
-    h("div", { id: "mat-notes" }));
-}
-UPDATE.materials = () => {
-  $$(".uwunit").forEach((e) => (e.textContent = unitLabel()));
-  const typ = { CA: { luw: [43, 49], ruw: [37, 43] }, FA: { luw: [35, 43], ruw: [28, 36] } };
-  const pcs = S.an?.control?.pcs;
-  S.meta.slots.forEach((s) => {
-    const info = S.an?.materials?.[s] || {}, kind = S.meta.kind[s];
-    ["luw", "ruw"].forEach((k) => {
-      const cell = $(`#chk-${k}_voids-${s}`); if (!cell) return;
-      const v = info[k + "_voids"]; cell.textContent = fmt(v, 1); cell.className = "calc";
-      if (v != null && typ[kind]) cell.classList.add(v < typ[kind][k][0] || v > typ[kind][k][1] ? "st-high" : "st-ok");
-      cell.title = typ[kind] ? `Typical ${typ[kind][k][0]} to ${typ[kind][k][1]}%` : "";
-    });
-    const c = $(`#chk-pcs-${s}`); if (!c) return;
-    const g = S.mix.materials[s]?.grad?.[pcs != null ? String(pcs) : ""];
-    c.className = "calc";
-    if (pcs && g != null && g !== "") {
-      c.textContent = fmt(g, 1);
-      const wrong = (kind === "CA" && g >= 50) || (kind === "FA" && g < 50);
-      if (kind !== "F") c.classList.add(wrong ? "st-high" : "st-ok");
-      c.title = `PCS ${pcs} mm. Coarse aggregates pass 49.9% or less.`;
-    } else c.textContent = pcs ? "-" : "after trial 1";
-  });
-  const notes = $("#mat-notes"); if (!notes) return;
-  notes.innerHTML = "";
-  const msg = [];
-  S.meta.slots.forEach((s) => {
-    const m = S.mix.materials[s]; if (!(m?.name || "").trim()) return;
-    const k = S.meta.kind[s];
-    const miss = sieves().filter((sv) => m.grad?.[sv] == null || m.grad[sv] === "");
-    if (miss.length) msg.push(`${m.name}: gradation missing on ${miss.length} sieve(s).`);
-    if (!num(m.gsb)) msg.push(`${m.name}: needs Gsb.`);
-    if (k === "CA" && !num(m.ruw)) msg.push(`${m.name}: needs RUW (sets the coarse volume in SMA).`);
-    if (k === "FA" && !num(m.luw)) msg.push(`${m.name}: needs LUW (fills the coarse voids in SMA).`);
-  });
-  if (msg.length) notes.append(h("div", { class: "notice" }, h("b", {}, "Still needed"), h("ul", {}, msg.map((t) => h("li", {}, t)))));
-};
-
-
 /* paste a whole table from Excel: stockpiles in columns or rows, sieve labels optional */
 function sieveFromLabel(lbl) {
   const t = String(lbl || "").toLowerCase().replace(/\s+/g, " ").trim();
   if (!t || /pan/.test(t)) return null;
-  const SV = sieves().map(Number);
+  const SV = allSieves().map(Number);
   const near = (x) => { const k = SV.find((v) => Math.abs(v - x) / v < 0.04); return k === undefined ? null : k; };
   let m = t.match(/(\d+(?:\.\d+)?)\s*mm/); if (m) return near(+m[1]);
   const NO = { 4: 4.75, 8: 2.36, 16: 1.18, 30: 0.6, 50: 0.3, 100: 0.15, 200: 0.075 };
@@ -559,7 +547,7 @@ function parseTable(text, retained) {
     r.slice(first).forEach((v, j) => {
       if (!piles[j]) return;
       const x = num(v); if (x === null) return;
-      if (sv !== null) { const k = keys.find((kk) => Math.abs(+kk - sv) < 1e-9); if (k) piles[j].grad[k] = retained ? +(100 - x).toFixed(2) : x; }
+      if (sv !== null) { const k = allSieves().find((kk) => Math.abs(+kk - sv) < 1e-9); if (k) piles[j].grad[k] = retained ? +(100 - x).toFixed(2) : x; }
       else piles[j].props[pr] = x;
     });
   });
@@ -620,7 +608,7 @@ function pasteTableDialog() {
           m.grad = { ...(m.grad || {}), ...p.grad };
           Object.assign(m, p.props); n++;
         });
-        d.close(); d.style.maxWidth = ""; changed({ now: true }); renderWork(); toast(`Filled ${n} stockpile${n === 1 ? "" : "s"}`);
+        d.close(); d.style.maxWidth = ""; changed({ now: true }); render(); toast(`Filled ${n} stockpile${n === 1 ? "" : "s"}`);
       } }, "Fill materials")));
   d.showModal(); setTimeout(() => ta.focus(), 50);
 }
@@ -648,433 +636,910 @@ async function importDialog() {
     h("div", { class: "row" }, h("span", { class: "spacer" }), h("button", { class: "btn", onclick: () => d.close() }, "Cancel"),
       h("button", { class: "btn primary", onclick: () => {
         $$("input:checked", box).forEach((c) => (S.mix.materials[c.value] = JSON.parse(JSON.stringify(src.materials[c.value]))));
-        d.close(); changed({ now: true }); renderWork(); toast("Materials imported");
+        d.close(); changed({ now: true }); render(); toast("Materials imported");
       } }, "Import selected")));
   await load(); d.showModal();
 }
 
-/* ---------------------------------------------------------------- step 3: trials */
+/* ---------------------------------------------------------------- 2 Criteria */
+const ROT_ROWS = [["PCS", "% passing PCS per 1% VMA", 2], ["CA", "CA ratio per 1% VMA", 3], ["FAc", "FAc ratio per 1% VMA", 3], ["FAf", "FAf ratio per 1% VMA", 3],
+  ["FAc_dip", "FAc dip (VMA lowest)", 2], ["FAf_dip", "FAf dip (VMA lowest)", 2], ["AC", "Air voids per 1% effective binder", 2], ["pba_abs", "Pba as a share of water absorption", 2]];
+function renderCriteria(page) {
+  const m = S.mix;
+  practicalUI(true);
+  const typeSel = h("select", { "aria-label": "Mix type" }, TYPE_KEYS.map(([v, t]) => h("option", { value: v, selected: normType(m.settings.mix_type) === v ? true : null }, t)));
+  const nmasSel = h("select", { "aria-label": "NMAS" }, h("option", { value: "" }, "Detect from Trial 1"), NMAS_KEYS.map((v) => h("option", { value: v, selected: num(m.settings.nmas_override) === +v ? true : null }, `${v} mm`)));
+  const unitSel = h("select", { "aria-label": "Units" }, [["auto", "Detect from unit weights"], ["metric", "Metric (kg/m³)"], ["english", "US customary (lb/ft³)"]].map(([v, t]) => h("option", { value: v, selected: m.settings.units === v ? true : null }, t)));
+  const typeChanged = () => { m.bailey_ranges = null; m.rot_override = {}; S.fit = null; changed({ now: true }); setTimeout(render, 400); toast("Typical values loaded for the new mix type"); };
+  typeSel.addEventListener("change", () => { m.settings.mix_type = typeSel.value; typeChanged(); });
+  nmasSel.addEventListener("change", () => { m.settings.nmas_override = num(nmasSel.value); m.bailey_ranges = null; changed({ now: true }); setTimeout(render, 400); });
+  unitSel.addEventListener("change", () => edit(["settings", "units"], unitSel.value));
+  page.append(h("div", { class: "head" }, h("div", {}, h("h1", {}, "Criteria"),
+    h("p", { class: "intro" }, "What a good trial looks like for this mix. Pick the mix type and NMAS first. Typical Bailey values for that type load below, and you can change any of them. Leave a box blank to ignore it."))));
+  const banner = h("div", { class: "banner", id: "type-banner" });
+  page.append(h("section", { class: "card topcard" },
+    h("div", { class: "fgrid five" },
+      h("label", { class: "f" }, h("span", {}, "Mix type"), typeSel),
+      h("label", { class: "f" }, h("span", {}, "NMAS"), nmasSel),
+      h("label", { class: "f" }, h("span", {}, "Binder Gb"), numInput(["settings", "gb"])),
+      h("label", { class: "f" }, h("span", {}, "Fiber, % of total mix"), numInput(["settings", "fiber_pct"], { placeholder: "none" })),
+      h("label", { class: "f" }, h("span", {}, "Units"), unitSel)),
+    banner,
+    h("label", { class: "f", style: "margin-top:12px" }, h("span", {}, "Notes"),
+      (() => { const t = h("textarea", { rows: 2 }); t.value = m.notes || ""; t.addEventListener("input", () => edit(["notes"], t.value)); return t; })())));
+
+  const left = h("div", { class: "col" }), right = h("div", { class: "col" });
+  page.append(h("div", { class: "cols2" }, left, right));
+
+  // volumetric targets
+  const vol = [["vma", "VMA, %", "e.g. 17.0"], ["va", "Air voids, %", "e.g. 3.5"], ["pb_min", "Minimum binder, %", "optional"],
+    [["vfa", 0], "VFA min, %", "optional"], [["vfa", 1], "VFA max, %", "optional"], ["vcadrc", "VCA dry-rodded, %", "once measured"], ["vma_tol", "Tune binder once VMA is within ±", "0.3"]];
+  left.append(h("section", { class: "card" }, h("h2", {}, "Volumetric targets"), h("p", { class: "hint" }, "The search aims for VMA. Binder is then set for the air voids."),
+    h("div", { class: "fgrid three" }, vol.map(([k, t, ph]) => h("label", { class: "f" }, h("span", {}, t), numInput(["targets"].concat(k), { placeholder: ph }))))));
+
+  // Bailey ranges
+  const rb = h("tbody", { id: "ranges-body" });
+  left.append(h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "Bailey ranges"), h("span", { class: "hint", id: "ranges-for" })),
+    h("p", { class: "hint" }, "Soft goals for the search. A fine-graded mix uses the new CA, FAc and FAf ratios on the fine fraction."),
+    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Principle"), h("th", {}, "Min"), h("th", {}, "Max"), h("th", {}, "Typical"))), rb),
+    h("div", { class: "row note" }, h("button", { class: "btn small", onclick: () => { m.bailey_ranges = null; changed({ now: true }); setTimeout(render, 350); } }, "Reset ranges to typical"))));
+
+  // rules of thumb
+  const rotBody = h("tbody", { id: "rot-body" });
+  left.append(h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "Rules of thumb for prediction"), h("span", { class: "hint", id: "rot-for" })),
+    h("p", { class: "hint" }, "How much each value must change to move VMA by 1%. The class values are used until you change them. After 3 tested trials the tool can fit them to your mix."),
+    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Factor"), h("th", {}, "In use"), h("th", {}, "Class value"), h("th", {}, "Typical range"), h("th", {}, "Fitted to your trials"))), rotBody),
+    h("div", { class: "row note", id: "fit-row" })));
+
+  // gradation limits
+  const cpBody = h("tbody", {});
+  sieves().forEach((s, r) => cpBody.append(h("tr", {}, h("th", { class: "rowh" }, lab(s)[0], h("small", {}, lab(s)[1])),
+    h("td", {}, numInput(["control_points", s, "min"], { grid: [r, 0, "cp"] })),
+    h("td", {}, numInput(["control_points", s, "max"], { grid: [r, 1, "cp"] })),
+    h("td", { class: "soft" }, numInput(["control_points", s, "soft_min"], { grid: [r, 2, "cp"] })),
+    h("td", { class: "soft" }, numInput(["control_points", s, "soft_max"], { grid: [r, 3, "cp"] })))));
+  right.append(h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "Gradation limits"), h("span", { id: "band-btn" })),
+    h("p", { class: "hint" }, "Control points are hard limits. Soft targets are where you would like a sieve to land, for example 22 to 24% on #8."),
+    h("div", { id: "cp-preview" }),
+    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Sieve"), h("th", {}, "Control min"), h("th", {}, "Control max"), h("th", { class: "softh" }, "Soft min"), h("th", { class: "softh" }, "Soft max"))), cpBody),
+    h("p", { class: "hint" }, "Paste columns straight from Excel into the first box.")));
+
+  // practical limits
+  const pr = practicalUI(true);
+  const cb = (key, val, label) => { const i = h("input", { type: "checkbox", checked: val ? true : null }); i.addEventListener("change", () => edit(["search", key], i.checked)); return h("label", { class: "check" }, i, h("span", {}, label)); };
+  right.append(h("section", { class: "card" }, h("h2", {}, "Practical limits"), h("p", { class: "hint" }, "What the plant can actually feed."),
+    h("label", { class: "check" }, h("span", {}, "A stockpile is 0% or at least"), numInput(["search", "min_pile_pct"], { cls: "tiny", label: "Minimum stockpile percent" }), h("span", {}, "%")),
+    cb("min_fillers", pr.min_fillers, "Apply that minimum to fillers too"),
+    cb("one_fine", pr.one_fine, "Prefer one fine aggregate. Two are kept only when it clearly helps."),
+    cb("lock_small_fillers", pr.lock_small_fillers, "Keep fillers at 2% or less fixed unless I unlock them")));
+
+  S.refresh = () => {
+    const ti = typeInfo(), dr = S.an?.default_ranges || {}, nm = S.an?.nmas, isFG = mixType() === "fg";
+    const c = S.an?.control;
+    banner.innerHTML = "";
+    banner.append(h("span", { class: "grow" }, "Typical values loaded for ", h("b", {}, `${typeLabel()}${nm ? ", " + nm + " mm" : ""}`), ": ",
+      c ? `control sieves ${[c.half, c.pcs, c.scs, c.tcs].filter((x) => x != null).join(", ")} mm${isFG ? ` (new sieves; original PCS ${c.coarse_pcs} mm)` : ""}, ` : "control sieves once the NMAS is known, ",
+      `coarse unit weight ${ti.uw_range[0]} to ${ti.uw_range[1]}% of ${ti.uw_ref.toUpperCase()}, fine unit weight 100% of ${ti.fa_ref.toUpperCase()}, and the ${ti.label} rules of thumb.`),
+      h("button", { class: "btn small", onclick: () => { m.bailey_ranges = null; m.rot_override = {}; changed({ now: true }); setTimeout(render, 350); } }, "Reset to typical"),
+      h("button", { class: "btn link", onclick: () => { S.tab = "reference"; render(); } }, "All mix types"));
+    $("#ranges-for").textContent = `typical for ${ti.label}${nm ? ", " + nm + " mm" : ""}`;
+    $("#rot-for").textContent = `class values for ${ti.label}`;
+    // ranges table (rebuilt only when it holds no focus)
+    if (!rb.contains(document.activeElement)) {
+      rb.innerHTML = "";
+      const cur = () => m.bailey_ranges || dr;
+      [["ca_ruw", ti.uw_label + " (chosen unit weight)"], ["CA", (isFG ? "New " : "") + "CA ratio"], ["FAc", (isFG ? "New " : "") + "FAc ratio"], ["FAf", (isFG ? "New " : "") + "FAf ratio"]].forEach(([k, t]) => {
+        const mk = (i) => {
+          const inp = h("input", { type: "text", inputmode: "decimal", value: cur()[k]?.[i] ?? "", "aria-label": `${t} ${i ? "max" : "min"}` });
+          inp.addEventListener("input", () => {
+            if (!m.bailey_ranges) m.bailey_ranges = JSON.parse(JSON.stringify(dr));
+            m.bailey_ranges[k] = m.bailey_ranges[k] || [null, null];
+            m.bailey_ranges[k][i] = num(inp.value); changed();
+          });
+          return inp;
+        };
+        rb.append(h("tr", {}, h("th", { class: "rowh" }, t), h("td", {}, mk(0)), h("td", {}, mk(1)), h("td", { class: "calc" }, dr[k]?.[0] == null ? "-" : `${dr[k][0]} to ${dr[k][1]}`)));
+      });
+    }
+    if (!rotBody.contains(document.activeElement)) {
+      rotBody.innerHTML = "";
+      const ov = m.rot_override || {}, fit = S.fit?.ok ? S.fit.rot : null;
+      ROT_ROWS.forEach(([k, t, d]) => {
+        const label = k === "PCS" && isFG ? "% passing original PCS per 1% VMA" : (isFG && ["CA", "FAc", "FAf"].includes(k) ? "New " + t : t);
+        const inp = h("input", { type: "text", inputmode: "decimal", value: ov[k] ?? "", placeholder: String(ti.rot[k]), "aria-label": label });
+        inp.addEventListener("input", () => { m.rot_override = m.rot_override || {}; const v = num(inp.value); if (v == null) delete m.rot_override[k]; else m.rot_override[k] = v; changed(); });
+        const r = ti.rot_range[k];
+        rotBody.append(h("tr", {}, h("th", { class: "rowh" }, label), h("td", {}, inp), h("td", { class: "calc" }, ti.rot[k]),
+          h("td", { class: "calc" }, r ? `${r[0]} to ${r[1]}` : "-"), h("td", { class: "calc" + (fit ? " fitted" : "") }, fit ? fmt(fit[k], d) : "after 3 tests")));
+      });
+      const fr = $("#fit-row"); fr.innerHTML = "";
+      const nT = testedAn().length;
+      fr.append(h("button", { class: "btn small", disabled: nT < 3 ? true : null, onclick: runFit }, "Fit to my trials"));
+      if (S.fit?.ok) fr.append(h("button", { class: "btn small primary", onclick: () => { m.rot_override = { ...S.fit.rot }; changed({ now: true }); toast("Fitted values in use"); setTimeout(render, 350); } }, "Use fitted values"),
+        h("span", { class: "hint" }, `VMA error ${S.fit.vma_rms_before} → ${S.fit.vma_rms_after} (rms, ${S.fit.comparisons} comparisons)`));
+      else fr.append(h("span", { class: "hint" }, nT < 3 ? `${nT} of 3 tested trials so far.` : "Ready to fit."));
+      if (Object.keys(ov).length) fr.append(h("button", { class: "btn link", onclick: () => { m.rot_override = {}; changed({ now: true }); setTimeout(render, 350); } }, "Back to class values"));
+    }
+    const bb = $("#band-btn"); bb.innerHTML = "";
+    if (S.an?.band && Object.keys(S.an.band.limits).length) bb.append(h("button", { class: "btn small", onclick: () => {
+      Object.entries(S.an.band.limits).forEach(([s, [lo, hi]]) => { const k = allSieves().find((x) => Math.abs(+x - +s) < 1e-9); if (!k) return; m.control_points[k] = { ...(m.control_points[k] || {}), min: lo, max: hi }; });
+      changed({ now: true }); setTimeout(render, 350); toast(`${S.an.band.name} band loaded as control points`);
+    } }, `Load ${S.an.band.name} band`));
+    const pv = $("#cp-preview"); pv.innerHTML = "";
+    pv.append(h("div", { class: "chart small", html: gradChart({ series: [], nmas: S.an?.nmas, cps: m.control_points, compact: true }) }));
+  };
+}
+async function runFit() {
+  try { S.fit = await api("/api/fit", { mix: S.mix }); }
+  catch (e) { toast(e.message); return; }
+  if (!S.fit.ok) toast(S.fit.message);
+  if (S.refresh) S.refresh();
+}
+
+/* ---------------------------------------------------------------- 3 Trials */
 function nextTrialId() { let n = 1; while (trialById("T" + n)) n++; return "T" + n; }
-function addTrial(pct, extra = {}) {
+function largestOf(pct, kind, locks = {}) {
+  const c = readySlots().filter((s) => S.meta.kind[s] === kind && !locks[s]);
+  return c.sort((a, b) => (num(pct?.[b]) || 0) - (num(pct?.[a]) || 0))[0] || null;
+}
+function defaultLocks(pct) {
+  const L = {};
+  if (practicalUI().lock_small_fillers) readySlots().forEach((s) => { const x = num(pct?.[s]) || 0; if (S.meta.kind[s] === "F" && x > 0 && x <= 2) L[s] = true; });
+  return L;
+}
+function addTrial(extra = {}) {
   const id = nextTrialId();
-  const t = { id, label: "Trial " + id.slice(1), source: "lab", created: new Date().toISOString(), pct: { ...pct }, results: { pb: null, gmb: [null, null], gmm: [null, null], vcadrc: null }, notes: "", ...extra };
-  S.mix.trials.push(t); S.selTrial = id;
+  const pct = extra.pct ? { ...extra.pct } : {};
+  const t = { id, label: "Trial " + id.slice(1), source: "lab", created: new Date().toISOString(), pct,
+    results: { pb: null, gmb: [], gmm: [], vcadrc: null }, mode: "mass", ...extra };
+  t.locks = t.locks || defaultLocks(pct);
+  t.balance = t.balance || largestOf(pct, "FA", t.locks) || largestOf(pct, "CA", t.locks);
+  S.mix.trials.push(t); S.sel = id; S.sub = "blend";
   return t;
 }
-function renderTrials(p) {
-  const trials = S.mix.trials;
-  const slots = readySlots();
-  p.append(h("div", { class: "row" }, h("h2", {}, "Trials"), h("span", { class: "spacer" }),
-      h("button", { class: "btn small", onclick: baileyDialog, disabled: slots.length < 2 ? true : null }, "Build a blend from Bailey inputs"),
-      h("button", { class: "btn small primary", onclick: () => {
-        const last = trials[trials.length - 1];
-        addTrial(last ? last.pct : {}); changed({ now: true }); renderWork();
-      }, disabled: slots.length < 2 ? true : null }, "Add trial")),
-    h("p", { class: "intro" }, "Each column is one trial. Enter the blend as % by mass of aggregate, then the lab results. Click a trial name to show it on the chart."));
-  if (slots.length < 2) { p.append(h("div", { class: "notice" }, "Add your stockpiles in Materials first. Each one needs a name and a Gsb.")); return; }
-  if (!trials.length) { p.append(h("div", { class: "notice teal" }, "Add trial 1 with the blend you mixed in the lab. The tool works out its Bailey values from the stockpile percentages.")); return; }
-
-  const head = h("tr", {}, h("th", { class: "rowh" }, ""), trials.map((t, c) => {
-    const lbl = textInput(["trials", c, "label"], { cls: "tname", label: "Trial name" });
-    lbl.addEventListener("input", () => renderSide());
-    return h("th", { class: "trialcol" + (t.id === S.selTrial ? " sel" : ""), dataset: { tid: t.id }, onclick: (e) => { if (e.target.tagName !== "INPUT" && e.target.tagName !== "BUTTON") { S.selTrial = t.id; highlightTrial(); renderSide(); } } },
-      h("div", { class: "trialhead" }, lbl, h("span", { class: "srcflag" + (t.source === "tool" ? " tool" : "") }, t.source === "tool" ? "Proposed by tool" : t.source === "bailey" ? "Built from Bailey inputs" : "Entered"),
-        h("span", { class: "row", style: "gap:2px" },
-          t.prediction ? h("button", { class: "btn link", style: "font-size:12px", title: "Use this after you change a proposed blend. The old prediction no longer matches it.", onclick: () => clearPrediction(t.id) }, "Clear prediction") : null,
-          h("button", { class: "btn link", style: "font-size:12px", onclick: () => removeTrial(t.id) }, "Remove"))));
-  }));
-  const body = h("tbody", {});
-  const grp = (t) => body.append(h("tr", { class: "group" }, h("th", { colspan: trials.length + 1 }, t)));
-  grp("Blend, % by mass of aggregate");
-  slots.forEach((s, r) => body.append(h("tr", {}, h("th", { class: "rowh", style: `--k:${slotColor(s)}` }, h("i", { class: "sw" }), matName(s), h("small", {}, SLOT_NAMES[s])),
-    trials.map((t, c) => h("td", { dataset: { tid: t.id } }, numInput(["trials", c, "pct", s], { grid: [r, c, "tri"] }))))));
-  body.append(h("tr", {}, h("th", { class: "rowh" }, "Total"), trials.map((t) => h("td", { class: "calc strong", id: `sum-${t.id}`, dataset: { tid: t.id } }, "-"))));
-  grp("Lab results");
-  const rr = [["pb", "Binder content Pb, %"], ["gmb0", "Gmb 1"], ["gmb1", "Gmb 2"], ["gmm0", "Gmm 1"], ["gmm1", "Gmm 2"], ["vcadrc", "VCA dry-rodded, % (optional)"]];
-  rr.forEach(([k, t], r) => body.append(h("tr", {}, h("th", { class: "rowh" }, t), trials.map((tr, c) => {
-    const path = k.startsWith("gm") ? ["trials", c, "results", k.slice(0, 3), +k[3]] : ["trials", c, "results", k];
-    return h("td", { dataset: { tid: tr.id } }, numInput(path, { grid: [20 + r, c, "tri"] }));
-  }))));
-  const calcRows = [
-    ["Volumetrics", [["gmb", "Gmb, average", 3], ["gmm", "Gmm, average", 3], ["gsb", "Gsb of blend", 3], ["vma", "VMA, %", 1, "vma"], ["va", "Air voids, %", 1, "va"], ["vfa", "VFA, %", 1, "vfa"], ["pba", "Pba, %", 2], ["pbe", "Pbe, %", 2], ["vca_mix", "VCAmix, %", 1, "vca"]]],
-    ["Bailey", [["nmas", "NMAS detected, mm", null], ["cuw", "% CA RUW", 1, "ca_ruw"], ["volca", "CA volume, %", 1], ["pcs", "Passing PCS, %", 1], ["CA", "CA ratio", 3, "CA"], ["FAc", "FAc ratio", 3, "FAc"], ["FAf", "FAf ratio", 3, "FAf"], ["p200", "Passing #200, %", 1]]],
-    ["Prediction check", [["pvma", "Predicted VMA, %", 1], ["evma", "VMA error, pred minus actual", 2], ["pva", "Predicted Va at lab Pb, %", 1], ["eva", "Va error, pred minus actual", 2]]],
-  ];
-  calcRows.forEach(([g, rows]) => { grp(g); rows.forEach(([k, t]) => body.append(h("tr", {}, h("th", { class: "rowh" }, t), trials.map((tr) => h("td", { class: "calc", id: `c-${k}-${tr.id}`, dataset: { tid: tr.id } }, "-"))))); });
-  p.append(h("div", { class: "gridwrap" }, h("table", { class: "grid", id: "trial-grid" }, h("thead", {}, head), body)),
-    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn small", onclick: () => copyGrid("#trial-grid") }, "Copy table for Excel"),
-      h("span", { class: "hint" }, "To paste in, copy a block in Excel, click the first cell here, and paste.")),
-    h("div", { id: "trial-notes" }));
-  UPDATE.trials._rows = calcRows;
+function planNext(fromId, binderOnly = false) {
+  const T = testedAn();
+  const refA = (fromId && anTrial(fromId)?.volumetrics?.complete) ? anTrial(fromId) : T[T.length - 1];
+  if (!refA) { toast("Test a trial first"); return; }
+  const ref = trialById(refA.id);
+  const t = addTrial({ pct: { ...ref.pct }, ref: ref.id, source: "tool", results: { pb: num(ref.results?.pb), gmb: [], gmm: [], vcadrc: null } });
+  t.option = binderOnly ? "binder" : null;
+  changed({ now: true }); render();
+  if (!binderOnly) findSuggestions(t);
+  else liveUpdate(t, true);
 }
-function highlightTrial() { $$("#trial-grid [data-tid]").forEach((e) => e.classList.toggle("sel", e.dataset.tid === S.selTrial)); }
-function clearPrediction(id) {
-  const t = trialById(id); if (!t) return;
-  delete t.prediction; delete t.option; delete t.reference;
-  t.source = "lab"; changed({ now: true }); renderWork(); toast(`${t.label}: prediction cleared`);
+function startTrial(mode) {
+  const pct = {};
+  if (mode === "mass") readySlots().forEach((s) => (pct[s] = 0));
+  const t = addTrial({ pct, mode, source: mode === "bailey" ? "bailey" : "lab" });
+  if (mode === "bailey") t.bailey_inputs = defaultBaileyInputs();
+  changed({ now: true }); render();
+  if (mode === "bailey") runForward(t);
+}
+function defaultBaileyInputs() {
+  const ca = readySlots().filter((s) => S.meta.kind[s] === "CA"), fa = readySlots().filter((s) => S.meta.kind[s] === "FA");
+  const split = (arr) => { const o = {}; arr.forEach((s, i) => (o[s] = i === 0 ? 100 - Math.round(100 / arr.length) * (arr.length - 1) : Math.round(100 / arr.length))); return o; };
+  const f2 = (S.mix.materials.F2?.name || "").trim() ? 1 : 0;
+  return { cuw: typeInfo().uw_start, ca_vol: split(ca), fa_vol: split(fa), dust: mixType() === "sma" ? 10 : 5, f2 };
 }
 function removeTrial(id) {
-  if (!confirm("Remove this trial and its lab results?")) return;
+  if (!confirm("Delete this trial and its lab data?")) return;
   S.mix.trials = S.mix.trials.filter((t) => t.id !== id);
-  if (S.selTrial === id) S.selTrial = null;
-  changed({ now: true }); renderWork();
+  const last = S.mix.trials[S.mix.trials.length - 1];
+  S.sel = last ? last.id : null;
+  changed({ now: true }); render();
 }
-UPDATE.trials = () => {
-  highlightTrial();
-  const st = (v, key, status) => (status && status[key]) ? "st-" + status[key] : "";
-  const tgt = S.mix.targets || {};
+function scheduleSave() { clearTimeout(changed._s); changed._s = setTimeout(save, 1200); }
+
+function renderTrials(page) {
+  page.classList.add("three");
+  const rail = h("aside", { class: "rail" }), main = h("section", { class: "main" }), side = h("aside", { class: "side" });
+  page.append(rail, main, side);
+  const T = S.mix.trials;
+  if (readySlots().length < 2) {
+    main.append(h("h1", {}, "Trials"), h("div", { class: "notice" }, "Add at least two stockpiles with a name and a Gsb in Stockpiles first."));
+    renderRail(rail); return;
+  }
+  if (!S.sel || !trialById(S.sel)) S.sel = T.length ? T[T.length - 1].id : null;
+  renderRail(rail);
+  if (!S.sel) { renderFirstTrial(main, side); return; }
+  const t = trialById(S.sel);
+  const st = trialStatus(t);
+  const nameIn = textInput(["trials", T.indexOf(t), "label"], { cls: "tname", label: "Trial name" });
+  const fit = () => (nameIn.style.width = Math.max(5, (nameIn.value || "").length + 1) + "ch");
+  fit();
+  nameIn.addEventListener("input", () => { fit(); renderRail(rail); });
+  const refT = t.ref ? trialById(t.ref) : null;
+  main.append(h("div", { class: "trialhead" },
+    h("div", { class: "row" }, nameIn, h("span", { class: "status " + st.toLowerCase(), id: "t-status" }, st), h("span", { class: "phase", id: "t-phase" })),
+    h("div", { class: "row" }, h("span", { class: "hint" }, refT ? `Planned from ${refT.label}${t.option ? ", " + optTitle(t.option) : ""}.` : t.source === "bailey" ? "Built from Bailey inputs." : "Blend entered by you."),
+      h("span", { class: "spacer" }), h("button", { class: "btn link danger", onclick: () => removeTrial(t.id) }, "Delete trial"))));
+  const subs = [["blend", "1 Blend and binder"], ["lab", "2 Lab data"], ["results", "3 Results"]];
+  main.append(h("div", { class: "subtabs", role: "tablist" }, subs.map(([k, l]) => h("button", { role: "tab", "aria-selected": S.sub === k ? "true" : "false", onclick: () => { S.sub = k; render(); } }, l))));
+  const body = h("div", { class: "subbody" });
+  main.append(body);
+  if (S.sub === "blend") renderBlend(body, side, t);
+  else if (S.sub === "lab") renderLab(body, side, t);
+  else renderResults(body, side, t);
+}
+function optTitle(k) { return { balanced: "Recommended", coarse: "Coarse volume first", fines: "Fines and filler first", bailey: "Bailey targets first", binder: "Binder only" }[k] || k; }
+
+function railLine(t) {
+  const a = anTrial(t.id), v = a?.volumetrics || {};
+  if (v.complete) return `VMA ${fmt(v.vma, 1)}, Va ${fmt(v.va, 1)}, Pb ${fmt(v.pb, 1)}`;
+  const p = S.live[t.id]?.pred || t.prediction;
+  if (p && Math.abs(pctSum(t.pct) - 100) <= 0.05) return `Predicted VMA ${fmt(p.vma, 1)} at Pb ${fmt(num(t.results?.pb) ?? p.pb, 1)}`;
+  return `Blend totals ${fmt(pctSum(t.pct), 1)}%`;
+}
+function renderRail(rail) {
+  rail.innerHTML = "";
+  rail.append(h("div", { class: "railhead" }, "Trials"));
   (S.mix.trials || []).forEach((t) => {
-    const a = anTrial(t.id) || {};
-    const sum = Object.values(t.pct || {}).reduce((x, y) => x + (num(y) || 0), 0);
-    const sc = $(`#sum-${t.id}`); if (sc) { sc.textContent = fmt(sum, 1); sc.className = "calc strong " + (Math.abs(sum - 100) > 0.05 ? "st-high" : "st-ok"); sc.title = Math.abs(sum - 100) > 0.05 ? "Blend must total 100%" : ""; }
-    const v = a.volumetrics || {}, r = a.ratios || {}, b = a.bailey || {}, e = a.prediction_error || {};
-    const val = {
-      gmb: v.gmb, gmm: v.gmm, gsb: a.gsb, vma: v.vma, va: v.va, vfa: v.vfa, pba: v.pba, pbe: v.pbe, vca_mix: v.vca_mix,
-      nmas: a.nmas_detected, cuw: b.cuw_pct, volca: b.vol_ca, pcs: r.pct_pcs, CA: r.CA, FAc: r.FAc, FAf: r.FAf, p200: a.gradation?.["0.075"],
-      pvma: t.prediction?.vma, evma: e.vma, pva: e.va_pred_at_actual_pb, eva: e.va,
-    };
-    (UPDATE.trials._rows || []).forEach(([, rows]) => rows.forEach(([k, , d, skey]) => {
-      const cell = $(`#c-${k}-${t.id}`); if (!cell) return;
-      const x = val[k];
-      cell.textContent = d === null ? (x ?? "-") : fmt(x, d);
-      cell.className = "calc" + (t.id === S.selTrial ? " sel" : "");
-      if (skey && a.status && ["ca_ruw", "CA", "FAc", "FAf"].includes(skey) && x != null) cell.classList.add(st(x, skey, a.status));
-      if (skey === "vma" && x != null && num(tgt.vma) != null) cell.classList.add(Math.abs(x - tgt.vma) <= 0.2 ? "st-ok" : "st-high");
-      if (skey === "va" && x != null && num(tgt.va) != null) cell.classList.add(Math.abs(x - tgt.va) <= 0.2 ? "st-ok" : "st-high");
-      if (skey === "vca" && x != null && num(tgt.vcadrc || t.results?.vcadrc) != null) cell.classList.add(v.vca_ok ? "st-ok" : "st-high");
-      if (k === "nmas" && x != null && S.an?.nmas && x !== S.an.nmas) { cell.classList.add("st-high"); cell.title = `Design NMAS is ${S.an.nmas} mm`; }
-    }));
+    const st = trialStatus(t);
+    rail.append(h("button", { class: "tcard" + (t.id === S.sel ? " sel" : ""), onclick: () => { S.sel = t.id; S.sub = isTested(t.id) ? "results" : "blend"; render(); } },
+      h("span", { class: "row" }, h("b", {}, t.label || t.id), h("span", { class: "status " + st.toLowerCase() }, st)),
+      h("span", { class: "line" }, railLine(t))));
   });
-  const notes = $("#trial-notes"); if (!notes) return; notes.innerHTML = "";
-  const w = new Set();
-  (S.an?.trials || []).forEach((a) => (a.warnings || []).forEach((x) => w.add(x)));
-  (S.an?.trials || []).forEach((a) => { if (a.bailey?.error) w.add(a.bailey.error); if (a.error) w.add(a.error); });
-  if (w.size) notes.append(h("div", { class: "notice" }, h("b", {}, "Check"), h("ul", {}, [...w].map((x) => h("li", {}, x)))));
-};
+  if (!(S.mix.trials || []).length) rail.append(h("div", { class: "empty" }, "No trials yet. Your first one will appear here."));
+  const T = testedAn();
+  if (T.length) rail.append(h("button", { class: "btn primary block", onclick: () => planNext(isTested(S.sel) ? S.sel : null) }, "Plan next trial"));
+  rail.append(h("button", { class: "btn block", onclick: () => startTrial("bailey") }, T.length ? "New trial from Bailey inputs" : "Generate Trial 1"),
+    h("button", { class: "btn link block", onclick: () => startTrial("mass") }, "Enter a blend yourself"));
+  rail.append(h("div", { class: "railtools" },
+    h("button", { class: "btn link", onclick: downloadMix }, "Download mix file"),
+    h("button", { class: "btn link danger", onclick: deleteMix }, "Delete mix")));
+}
 
-/* Bailey inputs dialog: forward volume blend */
-function baileyDialog() {
-  const d = $("#dialog"); d.innerHTML = "";
+function renderFirstTrial(main, side) {
+  main.append(h("h1", {}, "Trial 1"), h("p", { class: "intro" }, "Two ways to start. Either way you can change any pile and the binder before you save."),
+    h("section", { class: "card accent" }, h("h2", {}, "Generate Trial 1 from Bailey inputs"),
+      h("p", {}, `Set the coarse unit weight (typical ${typeInfo().uw_range[0]} to ${typeInfo().uw_range[1]}% of ${typeInfo().uw_ref.toUpperCase()} for ${typeInfo().label}), how the piles share each fraction by volume, and the #200 target. The tool does the volume blend, the same steps as the Bailey volume blending sheet.`),
+      h("button", { class: "btn primary", onclick: () => startTrial("bailey") }, "Generate Trial 1")),
+    h("section", { class: "card" }, h("h2", {}, "Or enter a blend you already have"),
+      h("p", {}, "For example a blend adapted from an existing design. You can paste the percentages from Excel."),
+      h("button", { class: "btn", onclick: () => startTrial("mass") }, "Enter a blend")));
+  side.append(h("div", { class: "card" }, h("h2", {}, "Before you start"),
+    h("ul", { class: "plain" }, h("li", {}, `${readySlots().length} stockpiles are ready.`),
+      h("li", {}, num(S.mix.targets?.vma) != null ? `VMA target ${fmt(S.mix.targets.vma, 1)}%, air voids ${fmt(S.mix.targets.va, 1)}%.` : "Set the VMA and air-void targets in Criteria. The first binder estimate uses them."),
+      h("li", {}, S.an?.nmas ? `NMAS ${S.an.nmas} mm.` : "Set the NMAS in Criteria, or let Trial 1 detect it."))));
+}
+
+/* ---------- blend and binder */
+function renderBlend(body, side, t) {
+  const tested = isTested(t.id);
+  if (tested) {
+    body.append(h("div", { class: "notice teal" }, "This trial is tested. Changes here correct its record. To try a different blend, plan a new trial.",
+      h("button", { class: "btn small", style: "margin-left:12px", onclick: () => planNext(t.id) }, "Plan next trial from this one")));
+  }
+  const T = testedAn().filter((a) => a.id !== t.id);
+  if (!tested) {
+    const refSel = h("select", { "aria-label": "Start from" }, h("option", { value: "" }, T.length ? "No reference (no prediction)" : "No tested trial yet"),
+      T.map((a) => h("option", { value: a.id, selected: t.ref === a.id ? true : null }, `${trialById(a.id)?.label}: VMA ${fmt(a.volumetrics.vma, 1)}, Va ${fmt(a.volumetrics.va, 1)} at Pb ${fmt(a.volumetrics.pb, 1)}`)));
+    refSel.addEventListener("change", () => { t.ref = refSel.value || null; delete S.sugg[t.id]; changed(); render(); liveUpdate(t, true); });
+    body.append(h("div", { class: "row startfrom" }, h("label", {}, "Start from"), refSel));
+    if (t.ref) body.append(suggestionsBlock(t));
+  }
+  const isB = t.mode === "bailey" && !tested;
+  if (!tested) {
+    const seg = (on, label, fn) => h("button", { role: "radio", "aria-checked": on ? "true" : "false", class: "seg" + (on ? " on" : ""), onclick: fn }, label);
+    body.append(h("div", { class: "row editby", role: "radiogroup", "aria-label": "How to edit the blend" }, h("span", {}, "Edit the blend by"),
+      h("span", { class: "segs" }, seg(!isB, "Stockpile %", () => { t.mode = "mass"; changed(); render(); }),
+        seg(isB, "Bailey inputs (volume blend)", () => { t.mode = "bailey"; if (!t.bailey_inputs) t.bailey_inputs = baileyFromTrial(t); changed(); render(); runForward(t); }))));
+  }
+  body.append(isB ? baileyInputsBlock(t) : massBlock(t, tested));
+  body.append(binderBlock(t, tested));
+  renderBlendSide(side, t);
+  S.refresh = () => { updateMassCalc(t); if (!tested) liveUpdate(t, true); else renderBlendSide(side, t); };
+  liveUpdate(t, true);
+}
+function baileyFromTrial(t) {
+  const b = anTrial(t.id)?.bailey;
+  if (b && !b.error && b.cuw_pct) return { cuw: +b.cuw_pct.toFixed(1), ca_vol: Object.fromEntries(Object.entries(b.ca_vol).map(([k, v]) => [k, +v.toFixed(1)])), fa_vol: Object.fromEntries(Object.entries(b.fa_vol).map(([k, v]) => [k, +v.toFixed(1)])), dust: b.dust, f2: b.f2_pct || 0 };
+  return defaultBaileyInputs();
+}
+function suggestionsBlock(t) {
+  const box = h("section", { class: "sugg" });
+  const sg = S.sugg[t.id];
+  const head = h("div", { class: "cardhead" }, h("h2", {}, "Start from a suggestion"),
+    h("button", { class: "btn small", onclick: () => findSuggestions(t) }, sg?.loading ? "Searching…" : sg?.options ? "Search again" : "Find suggestions"));
+  box.append(head);
+  if (sg?.loading) { box.append(h("div", { class: "hint" }, "Searching for blends that reach your targets. This takes a few seconds.")); return box; }
+  if (sg?.error) { box.append(h("div", { class: "notice" }, sg.error)); return box; }
+  if (!sg?.options) { box.append(h("p", { class: "hint" }, "The tool searches for the blend that reaches your VMA target with the smallest change, using your locks and criteria.")); return box; }
+  const ref = trialById(t.ref);
+  const cards = sg.options.filter((o) => !o.duplicate_of).map((o) => ({ key: o.key, title: o.title, about: o.about, vma: o.prediction.vma, pb: o.prediction.pb, pct: o.pct }));
+  const bo = sg.binder;
+  if (bo) cards.push({ key: "binder", title: "Binder only", about: `Same blend as ${ref?.label}. Tune Pb for air voids.`, vma: bo.vma, pb: bo.pb, pct: { ...ref.pct } });
+  box.append(h("div", { class: "cards5", role: "radiogroup" }, cards.map((c) => h("button", { role: "radio", "aria-checked": t.option === c.key ? "true" : "false", class: "scard" + (t.option === c.key ? " on" : ""), onclick: () => {
+    t.pct = { ...c.pct }; t.option = c.key; t.mode = "mass";
+    t.results = t.results || {}; t.results.pb = +(+c.pb).toFixed(1);
+    t.balance = t.balance && (num(t.pct[t.balance]) || 0) > 0 ? t.balance : largestOf(t.pct, "FA", t.locks) || largestOf(t.pct, "CA", t.locks);
+    changed(); render();
+  } }, h("span", { class: "t" }, c.title), h("span", { class: "a" }, c.about),
+    h("span", { class: "n" }, h("span", {}, h("b", {}, fmt(c.vma, 1)), " VMA"), h("span", {}, h("b", {}, fmt(c.pb, 2)), " Pb"))))));
+  return box;
+}
+async function findSuggestions(t) {
+  if (!t.ref) return;
+  S.sugg[t.id] = { loading: true };
+  if (S.sel === t.id && S.tab === "trials") render();
+  try {
+    const locks = {}; Object.entries(t.locks || {}).forEach(([k, v]) => { if (v) locks[k] = true; });
+    const ref = trialById(t.ref);
+    const r = await api("/api/suggest", { mix: S.mix, ref: t.ref, locks, base: ref.pct });
+    const bo = await api("/api/predict", { mix: S.mix, ref: t.ref, pct: ref.pct });
+    S.sugg[t.id] = { options: r.options, binder: bo.prediction };
+  } catch (e) { S.sugg[t.id] = { error: e.message }; }
+  if (S.sel === t.id && S.tab === "trials" && S.sub === "blend") render();
+}
+
+function massBlock(t, tested) {
+  const ref = t.ref ? trialById(t.ref) : null;
   const slots = readySlots();
-  const ca = slots.filter((s) => S.meta.kind[s] === "CA"), fa = slots.filter((s) => S.meta.kind[s] === "FA");
-  const last = anTrial(S.mix.trials[S.mix.trials.length - 1]?.id);
-  const b = last?.bailey || {};
-  const v = { cuw: b.cuw_pct ? +b.cuw_pct.toFixed(1) : 118, dust: last?.gradation?.["0.075"] ?? 10, f2: num(S.mix.trials[S.mix.trials.length - 1]?.pct?.F2) || 0, ca: {}, fa: {} };
-  ca.forEach((s) => (v.ca[s] = b.ca_vol?.[s] != null ? +b.ca_vol[s].toFixed(1) : +(100 / ca.length).toFixed(1)));
-  fa.forEach((s) => (v.fa[s] = b.fa_vol?.[s] != null ? +b.fa_vol[s].toFixed(1) : +(100 / fa.length).toFixed(1)));
-  const inp = (obj, k) => { const i = h("input", { type: "text", inputmode: "decimal", value: obj[k] }); i.addEventListener("input", () => { obj[k] = num(i.value); run(); }); return i; };
-  const out = h("div", { class: "hint", style: "margin:10px 0" });
-  let result = null;
-  const run = async () => {
-    try {
-      const r = await api("/api/forward", { mix: S.mix, cuw: v.cuw, ca_vol: v.ca, fa_vol: v.fa, dust: v.dust, f2: v.f2 });
-      result = r.blend.pct;
-      out.innerHTML = "";
-      out.append(h("b", {}, "Blend: "), slots.concat(["F1", "F2"].filter((s) => !slots.includes(s))).filter((s) => result[s]).map((s) => `${matName(s)} ${fmt(result[s], 1)}%`).join(", "),
-        h("br"), `CA volume ${fmt(r.blend.vol_ca, 1)}%, passing PCS ${fmt(r.analysis.ratios.pct_pcs, 1)}%, CA ${fmt(r.analysis.ratios.CA, 3)}, FAc ${fmt(r.analysis.ratios.FAc, 3)}, FAf ${fmt(r.analysis.ratios.FAf, 3)}`);
-    } catch (e) { result = null; out.textContent = e.message; }
-  };
-  d.append(h("h3", {}, "Build a blend from Bailey inputs"),
-    h("p", { class: "hint" }, "Same steps as the class Volume Blending Spreadsheet. Filler 1 is adjusted to reach the #200 target. Filler 2 is a fixed %."),
-    h("div", { class: "fgrid" },
-      h("label", { class: "f" }, h("span", {}, "CA chosen UW, % RUW"), inp(v, "cuw")),
-      h("label", { class: "f" }, h("span", {}, "Passing #200 target, %"), inp(v, "dust")),
-      h("label", { class: "f" }, h("span", {}, `${matName("F2")}, %`), inp(v, "f2"))),
-    h("p", { class: "hint", style: "margin:12px 0 4px" }, "Coarse aggregates, % by volume (total 100)"),
-    h("div", { class: "fgrid" }, ca.map((s) => h("label", { class: "f" }, h("span", {}, matName(s)), inp(v.ca, s)))),
-    h("p", { class: "hint", style: "margin:12px 0 4px" }, "Fine aggregates, % by volume (total 100)"),
-    h("div", { class: "fgrid" }, fa.map((s) => h("label", { class: "f" }, h("span", {}, matName(s)), inp(v.fa, s)))),
-    out,
-    h("div", { class: "row" }, h("span", { class: "spacer" }), h("button", { class: "btn", onclick: () => d.close() }, "Cancel"),
-      h("button", { class: "btn primary", onclick: () => { if (!result) return; addTrial(result, { source: "bailey", bailey_inputs: JSON.parse(JSON.stringify(v)) }); d.close(); changed({ now: true }); renderWork(); } }, "Add as new trial")));
-  d.showModal(); run();
-}
-
-/* ---------------------------------------------------------------- step 4: next trial */
-function renderNext(p) {
-  p.append(h("h2", {}, "Next trial"),
-    h("p", { class: "intro" }, "The tool starts from a tested trial and searches for the blend that reaches your VMA target with the smallest change. It then sets Pb for your air-void target."),
-    (() => { const pr = practicalUI(); const bits = [];
-      if (pr.min_pile_pct > 0) bits.push(`each stockpile is 0 or at least ${fmt(pr.min_pile_pct, 1)}%${pr.min_fillers ? "" : " (fillers exempt)"}`);
-      if (pr.one_fine) bits.push("one fine aggregate is preferred");
-      return bits.length ? h("p", { class: "hint" }, `Practical limits from Mix setup: ${bits.join(", and ")}.`) : document.createTextNode(""); })());
-  const done = tested();
-  const tg = S.mix.targets || {};
-  if (!done.length) { p.append(h("div", { class: "notice" }, "Enter Pb, Gmb and Gmm for at least one trial first.")); return; }
-  if (num(tg.vma) == null || num(tg.va) == null) p.append(h("div", { class: "notice" }, "Set the VMA and air-void targets in Mix setup. Without them the search has nothing to aim for."));
-  if (!S.ref || !done.find((t) => t.id === S.ref)) S.ref = done[done.length - 1].id;
-  const refSel = h("select", { "aria-label": "Reference trial" }, done.map((t) => h("option", { value: t.id, selected: t.id === S.ref ? true : null }, trialById(t.id)?.label || t.id)));
-  refSel.addEventListener("change", () => { S.ref = refSel.value; S.suggestion = null; S.proposal = null; renderWork(); });
-  const ref = anTrial(S.ref);
-  p.append(h("div", { class: "row" },
-    h("label", { class: "f" }, h("span", {}, "Start from"), refSel),
-    h("div", { class: "hint", style: "align-self:end" }, `VMA ${fmt(ref.volumetrics.vma, 1)}%, Va ${fmt(ref.volumetrics.va, 1)}% at Pb ${fmt(ref.volumetrics.pb, 1)}%. Targets: VMA ${fmt(tg.vma, 1)}%, Va ${fmt(tg.va, 1)}%.`)));
-  p.append(h("h3", {}, "Fix stockpiles", h("small", {}, "A fixed stockpile keeps its % in every option")));
-  const base = trialById(S.ref).pct || {};
-  p.append(h("div", { class: "locks" }, readySlots().map((s) => {
-    const cb = h("input", { type: "checkbox", checked: S.locks[s] ? true : null });
-    const lbl = h("label", { class: "lock" + (S.locks[s] ? " on" : ""), style: `--k:${slotColor(s)}` }, cb, h("span", { class: "nm" }, matName(s)), h("span", { class: "pc" }, `${fmt(num(base[s]) || 0, 1)}% now`));
-    cb.addEventListener("change", () => { S.locks[s] = cb.checked; lbl.classList.toggle("on", cb.checked); });
-    return lbl;
-  })));
-  p.append(baileyGoalsPanel(ref));
-  const go = h("button", { class: "btn teal", style: "margin-top:16px" }, S.suggestion ? "Search again" : "Find next trial");
-  go.addEventListener("click", async () => {
-    go.disabled = true; go.textContent = "Searching…";
-    try {
-      S.suggestion = await api("/api/suggest", { mix: S.mix, ref: S.ref, locks: S.locks });
-      S.optKey = "balanced"; pickOption("balanced"); renderWork();
-    } catch (e) { toast(e.message); go.disabled = false; go.textContent = "Find next trial"; }
-  });
-  p.append(go);
-  if (!S.suggestion) return;
-
-  p.append(h("div", { class: "options", role: "group", "aria-label": "Options" }, S.suggestion.options.map((o) => h("button", {
-    class: "opt", "aria-pressed": o.key === S.optKey ? "true" : "false", onclick: () => { pickOption(o.key); renderWork(); } },
-    h("h5", {}, o.title), h("p", {}, o.about),
-    o.duplicate_of ? h("div", { class: "dup" }, `Same blend as ${o.duplicate_of}.`) :
-      h("div", { class: "big" },
-        h("div", {}, h("b", {}, fmt(o.prediction.vma, 1)), h("span", {}, "VMA, %")),
-        h("div", {}, h("b", {}, fmt(o.prediction.pb, 2)), h("span", {}, "Pb, %")),
-        h("div", {}, h("b", {}, fmt(o.analysis.bailey?.cuw_pct, 0)), h("span", {}, "% CA RUW")))))));
-  p.append(h("div", { id: "proposal" }));
-  drawProposal();
-}
-const GOALS = [["ca_ruw", "% CA RUW", 1, "1.0"], ["CA", "CA ratio", 3, "0.010"], ["FAc", "FAc ratio", 3, "0.010"], ["FAf", "FAf ratio", 3, "0.010"]];
-function baileyGoalsPanel(ref) {
-  const rng = S.mix.bailey_ranges || S.an?.default_ranges || {};
-  S.mix.bailey_targets = S.mix.bailey_targets || {};
-  const rows = GOALS.map(([k, t, d, tol], r) => {
-    const g = S.mix.bailey_targets[k] = S.mix.bailey_targets[k] || { target: null, hard: false };
-    const tIn = numInput(["bailey_targets", k, "target"], { placeholder: "optional", grid: [r, 0, "goal"], label: t + " target" });
-    const hb = h("input", { type: "checkbox", checked: g.hard ? true : null, "aria-label": t + " hard" });
-    hb.addEventListener("change", () => { g.hard = hb.checked; changed(); });
-    const r0 = rng[k] || [];
-    const v = k === "ca_ruw" ? ref.bailey?.cuw_pct : ref.ratios?.[k];
-    return h("tr", {}, h("th", { class: "rowh" }, t),
-      h("td", { class: "calc" }, r0[0] == null && r0[1] == null ? "none" : `${r0[0] ?? "..."} to ${r0[1] ?? "..."}`),
-      h("td", { class: "calc" }, fmt(v, d)),
-      h("td", {}, tIn),
-      h("td", { class: "ctr" }, h("label", { class: "hardbox" }, hb, h("span", {}, "hard"))));
-  });
-  return h("div", {},
-    h("h3", {}, "Bailey goals", h("small", {}, "Ranges come from Mix setup. A target value replaces the range.")),
-    h("div", { class: "gridwrap" }, h("table", { class: "grid goals" },
-      h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Principle"), h("th", {}, "Range"), h("th", {}, `${trialById(S.ref)?.label || "Start"} value`), h("th", {}, "Target value"), h("th", {}, "Hard"))),
-      h("tbody", {}, rows))),
-    h("p", { class: "hint" }, "Hard keeps % CA RUW within 1 and each ratio within 0.01 of a target, or inside the range when there is no target. Each option holds only what it can move: coarse volume first holds % CA RUW, and fines and filler first holds FAc and FAf. Bailey targets first holds all four, ticked or not."));
-}
-function pickOption(key) {
-  S.optKey = key;
-  const o = S.suggestion.options.find((x) => x.key === key);
-  S.proposal = { ...o.pct }; S.proposalPred = { prediction: o.prediction, analysis: { ...o.analysis, status: o.status } };
-}
-function drawProposal() {
-  const box = $("#proposal"); if (!box || !S.proposal) return;
-  box.innerHTML = "";
-  const base = trialById(S.ref).pct || {};
-  const slots = readySlots();
-  const P = S.proposalPred.prediction, A = S.proposalPred.analysis, st = A.status || {};
+  const box = h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, tested ? "Blend, % by mass of aggregate" : "Your blend"),
+    !tested ? h("span", { class: "hint" }, t.option ? `Started from ${optTitle(t.option)}` : "") : null));
+  if (!tested) box.append(h("p", { class: "hint" }, "Type a % or use − and +. The pile marked Balance takes up the difference, so the total stays at 100. Lock a pile to keep it fixed."));
   const rows = slots.map((s, r) => {
-    const i = h("input", { type: "text", inputmode: "decimal", value: fmt(S.proposal[s] || 0, 1) });
-    i.dataset.g = "prop"; i.dataset.r = r; i.dataset.c = 0; i.addEventListener("keydown", gridKeys);
-    i.addEventListener("input", () => { S.proposal[s] = num(i.value) || 0; repredict(); });
-    const d = (S.proposal[s] || 0) - (num(base[s]) || 0);
-    return h("tr", {}, h("th", { class: "rowh", style: `--k:${slotColor(s)}` }, h("i", { class: "sw" }), matName(s), S.locks[s] ? h("small", {}, "fixed") : null),
-      h("td", { class: "calc" }, fmt(num(base[s]) || 0, 1)), h("td", {}, i),
-      h("td", { class: "calc " + (Math.abs(d) < 0.05 ? "" : d > 0 ? "delta up" : "delta down"), id: "d-" + s }, Math.abs(d) < 0.05 ? "-" : sgn(d, 1)));
+    const inp = h("input", { type: "text", inputmode: "decimal", value: num(t.pct[s]) != null ? fmt(t.pct[s], 1) : "", "aria-label": `${matName(s)} %`, class: "pct", disabled: t.locks?.[s] && !tested ? true : null });
+    inp.dataset.slot = s; inp.dataset.g = "blend"; inp.dataset.r = r; inp.dataset.c = 0; inp.dataset.path = JSON.stringify(["trials", S.mix.trials.indexOf(t), "pct", s]);
+    inp.addEventListener("keydown", gridKeys); inp.addEventListener("paste", gridPaste);
+    let last = num(t.pct[s]) || 0;
+    inp.addEventListener("focus", () => (last = num(t.pct[s]) || 0));
+    inp.addEventListener("input", () => setPile(t, s, num(inp.value), last, tested, (v) => (last = v)));
+    const step = (d) => { const old = num(t.pct[s]) || 0; const nv = Math.max(0, +(old + d).toFixed(1)); inp.value = fmt(nv, 1); setPile(t, s, nv, old, tested); };
+    const lock = h("input", { type: "checkbox", checked: t.locks?.[s] ? true : null, "aria-label": `Lock ${matName(s)}` });
+    lock.addEventListener("change", () => { t.locks = t.locks || {}; t.locks[s] = lock.checked; if (lock.checked && t.balance === s) t.balance = largestOf(t.pct, "FA", t.locks) || largestOf(t.pct, "CA", t.locks); changed(); render(); });
+    const bal = h("input", { type: "radio", name: "balance", checked: t.balance === s ? true : null, disabled: t.locks?.[s] ? true : null, "aria-label": `Balance with ${matName(s)}` });
+    bal.addEventListener("change", () => { t.balance = s; changed(); render(); });
+    return h("tr", { class: t.balance === s && !tested ? "isbal" : null },
+      h("th", { class: "rowh" }, h("i", { class: "sw", style: `background:${slotColor(s)}` }), matName(s), h("small", {}, SLOT_NAMES[s])),
+      ref ? h("td", { class: "calc" }, fmt(num(ref.pct?.[s]) || 0, 1)) : null,
+      h("td", { class: "stepper" }, tested ? inp : [h("button", { class: "stp", "aria-label": `Less ${matName(s)}`, disabled: t.locks?.[s] ? true : null, onclick: () => step(-0.5) }, "−"), inp, h("button", { class: "stp", "aria-label": `More ${matName(s)}`, disabled: t.locks?.[s] ? true : null, onclick: () => step(0.5) }, "+")]),
+      ref ? h("td", { class: "calc delta", id: "d-" + s }, "") : null,
+      !tested ? h("td", { class: "ctr" }, lock) : null,
+      !tested ? h("td", { class: "ctr" }, bal) : null);
   });
-  const total = slots.reduce((x, s) => x + (S.proposal[s] || 0), 0);
-  const off = Math.abs(total - 100) > 0.05;
-  rows.push(h("tr", {}, h("th", { class: "rowh" }, "Total"), h("td", { class: "calc" }, "100.0"), h("td", { class: "calc strong " + (off ? "st-high" : "st-ok") }, fmt(total, 1)),
-    h("td", {}, off ? h("button", { class: "btn link", style: "font-size:12.5px;padding:4px 8px", onclick: balanceProposal, title: "Adds the difference to the largest stockpile that is not fixed" }, "Make 100") : null)));
-  const flag = (k) => st[k] && st[k] !== "none" ? h("span", { class: "flag " + st[k] }, st[k] === "ok" ? "in range" : st[k]) : h("span", { class: "flag none" }, "no range");
-  const warn = [], note = [];
-  const goals = st.goals || {};
-  GOALS.forEach(([k, t, d]) => {
-    const g = goals[k]; if (!g) return;
-    const isHard = g.hard || S.optKey === "bailey";
-    if (isHard && (st[k] === "low" || st[k] === "high") && (g.target != null || g.lo != null || g.hi != null)) {
-      const v = k === "ca_ruw" ? A.bailey?.cuw_pct : A.ratios[k];
-      warn.push(`${t} is ${fmt(v, d)}, outside its hard ${g.target != null ? "target of " + fmt(g.target, d) : "range"}. These stockpiles, or the fixed ones, cannot reach it in this option.`);
-    }
+  box.append(h("table", { class: "grid blend" },
+    h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Stockpile"), ref ? h("th", {}, ref.label) : null, h("th", { class: "ctr" }, tested ? "%" : `${t.label}, %`), ref ? h("th", {}, "Change") : null, !tested ? h("th", { class: "ctr" }, "Lock") : null, !tested ? h("th", { class: "ctr" }, "Balance") : null)),
+    h("tbody", {}, rows, h("tr", { class: "total" }, h("th", { class: "rowh" }, "Total"), ref ? h("td", { class: "calc" }, "100.0") : null, h("td", { class: "calc strong", id: "blend-total" }, ""), h("td", { colspan: 3, id: "blend-fix" })))));
+  const [small, mn] = smallPiles(t.pct, t.locks);
+  if (small.length) box.append(h("p", { class: "warnline" }, small.map(([s, x]) => `${matName(s)} is ${fmt(x, 1)}%, below your ${fmt(mn, 1)}% practical minimum.`).join(" ")));
+  return box;
+}
+function setPile(t, s, v, old, tested, setLast) {
+  t.pct[s] = v == null ? 0 : v;
+  const bal = t.balance;
+  if (!tested && bal && bal !== s && !t.locks?.[bal] && v != null) {
+    const nb = Math.max(0, +((num(t.pct[bal]) || 0) + (old || 0) - v).toFixed(1));
+    t.pct[bal] = nb;
+    const bi = $(`input.pct[data-slot="${bal}"]`); if (bi) bi.value = fmt(nb, 1);
+  }
+  if (setLast) setLast(t.pct[s]);
+  t.option = t.option ? t.option : null;
+  changed(); updateMassCalc(t); liveUpdate(t);
+}
+function updateMassCalc(t) {
+  const tot = pctSum(t.pct);
+  const te = $("#blend-total");
+  if (te) { te.textContent = fmt(tot, 1); te.className = "calc strong " + (Math.abs(tot - 100) > 0.05 ? "st-high" : "st-ok"); }
+  const fx = $("#blend-fix");
+  if (fx) {
+    fx.innerHTML = "";
+    if (Math.abs(tot - 100) > 0.05) fx.append(h("button", { class: "btn link", onclick: () => {
+      const k = (t.balance && !t.locks?.[t.balance]) ? t.balance : largestOf(t.pct, "FA", t.locks) || largestOf(t.pct, "CA", t.locks);
+      if (!k) return; t.pct[k] = Math.max(0, +((num(t.pct[k]) || 0) + 100 - tot).toFixed(1));
+      const bi = $(`input.pct[data-slot="${k}"]`); if (bi) bi.value = fmt(t.pct[k], 1);
+      changed(); updateMassCalc(t); liveUpdate(t);
+    } }, "Make 100 with the balance pile"));
+  }
+  const ref = t.ref ? trialById(t.ref) : null;
+  if (ref) readySlots().forEach((s) => {
+    const d = (num(t.pct[s]) || 0) - (num(ref.pct?.[s]) || 0), c = $("#d-" + s); if (!c) return;
+    c.textContent = Math.abs(d) < 0.05 ? "-" : sgn(d, 1); c.className = "calc delta " + (d > 0.05 ? "up" : d < -0.05 ? "down" : "");
   });
-  const vt = num(S.mix.targets?.vma);
-  if (vt != null && Math.abs(P.vma - vt) > 0.3) warn.push(`Predicted VMA misses the ${fmt(vt, 1)}% target by ${sgn(P.vma - vt, 1)}. Your control points, Bailey ranges or fixed stockpiles pull the blend this way. Loosen one of them, or accept the miss and adjust in the next trial.`);
-  if (P.large_moves?.length) warn.push(`Large change in ${P.large_moves.join(", ")}. The rules of thumb are linear, so treat this estimate as a direction and confirm it with the trial.`);
-  (st.control_points || []).forEach((c) => warn.push(`Passing ${c.sieve} mm is ${fmt(c.value, 1)}%, ${c.side === "low" ? "below" : "above"} your control point.`));
-  if (A.nmas_detected !== S.an.nmas) warn.push(`This blend reads as ${A.nmas_detected} mm NMAS, not ${S.an.nmas} mm.`);
-  const vcadrc = num(S.mix.targets?.vcadrc);
-  if (vcadrc && P.vca_mix > vcadrc) warn.push(`Predicted VCAmix ${fmt(P.vca_mix, 1)}% is above VCA dry-rodded ${fmt(vcadrc, 1)}%.`);
-  if (Math.abs(total - 100) > 0.05) warn.push("The blend must total 100% before you can use it.");
-  const [small, mn] = smallPiles(S.proposal);
-  small.forEach(([sl, x]) => warn.push(`${matName(sl)} is ${fmt(x, 1)}%, below your ${fmt(mn, 1)}% practical minimum. Set it to 0 or raise it to ${fmt(mn, 1)}%.`));
-  (st.soft_points || []).forEach((c) => warn.push(`Passing ${sieveName(c.sieve)} is ${fmt(c.value, 1)}%, ${c.side === "low" ? "below" : "above"} your soft target of ${c.lo ?? "..."} to ${c.hi ?? "..."}%. The search could not reach it without giving up something harder.`));
-  const fines = slots.filter((sl) => S.meta.kind[sl] === "FA" && (S.proposal[sl] || 0) > 0.05);
-  if (practicalUI().one_fine && fines.length > 1) note.push(`This blend uses ${fines.length} fine aggregates. Your setup prefers one. The search keeps two only when one alone misses a goal.`);
+}
 
-  box.append(h("h3", {}, "Proposed blend", h("small", {}, "Edit any % to test your own idea. The prediction updates as you type.")),
-    h("div", { class: "propgrid" },
-      h("div", { class: "gridwrap" }, h("table", { class: "grid" },
-        h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Stockpile"), h("th", {}, trialById(S.ref).label), h("th", {}, "Proposed"), h("th", {}, "Change"))),
-        h("tbody", {}, rows))),
-      h("div", {},
-        h("div", { class: "readout" },
-          h("div", {}, h("span", {}, "Predicted VMA"), h("b", {}, fmt(P.vma, 1) + "%")),
-          h("div", {}, h("span", {}, "Recommended Pb"), h("b", {}, fmt(P.pb, 2) + "%")),
-          h("div", {}, h("span", {}, "Va at that Pb"), h("b", {}, fmt(P.va_at_pb, 1) + "%")),
-          h("div", {}, h("span", {}, `Va at Pb ${fmt(P.ref?.pb, 1)}%`), h("b", {}, fmt(P.va_at_ref_pb, 1) + "%")),
-          h("div", {}, h("span", {}, "VFA"), h("b", {}, fmt(P.vfa, 1) + "%")),
-          h("div", {}, h("span", {}, "VCAmix"), h("b", {}, fmt(P.vca_mix, 1) + "%")),
-          h("div", {}, h("span", {}, "% CA RUW"), h("b", { class: st.ca_ruw }, fmt(A.bailey?.cuw_pct, 1))),
-          h("div", {}, h("span", {}, "Passing PCS"), h("b", {}, fmt(A.ratios.pct_pcs, 1) + "%"))),
-        h("p", { class: "hint", style: "margin:14px 0 4px" }, "Where the VMA change comes from"),
-        h("div", { class: "terms" }, Object.entries(P.terms).map(([k, x]) => h("div", { class: "term" }, h("span", {}, k === "PCS" ? "Coarse volume" : k + " ratio"), h("b", { class: x > 0 ? "delta up" : x < 0 ? "delta down" : "" }, sgn(x, 2))))),
-        h("p", { class: "hint", style: "margin:14px 0 4px" }, "How the Bailey values move"),
-        (() => { const R0 = anTrial(S.ref) || {}; const rng = S.mix.bailey_ranges || S.an?.default_ranges || {};
-          const items = [["ca_ruw", "% CA RUW", R0.bailey?.cuw_pct, A.bailey?.cuw_pct, 1, 10], ["CA", "CA ratio", R0.ratios?.CA, A.ratios.CA, 3, 0.1], ["FAc", "FAc ratio", R0.ratios?.FAc, A.ratios.FAc, 3, 0.1], ["FAf", "FAf ratio", R0.ratios?.FAf, A.ratios.FAf, 3, 0.1]];
-          return h("div", { class: "moves" }, items.map(([k, t, v, pv, d, sc]) => {
-            const tg = num(S.mix.bailey_targets?.[k]?.target), tol = k === "ca_ruw" ? 1 : 0.01;
-            const mc = moveClass(v, pv, tg != null ? [tg - tol, tg + tol] : rng[k], sc), up = pv > v + 1e-9, dn = pv < v - 1e-9;
-            return h("div", { class: "move " + mc }, h("span", {}, t),
-              h("b", {}, fmt(v, d), h("i", { class: "ar" }, up ? "\u2191" : dn ? "\u2193" : "="), fmt(pv, d)),
-              h("small", {}, flag(k), mc === "better" ? " closer" : mc === "worse" ? " further" : ""));
-          })); })())),
-    ...(warn.length ? [h("div", { class: "notice" }, h("ul", {}, warn.map((x) => h("li", {}, x))))] : []),
-    ...(note.length ? [h("div", { class: "notice teal" }, h("ul", {}, note.map((x) => h("li", {}, x))))] : []),
-    h("div", { class: "row", style: "margin-top:18px" },
-      h("button", { class: "btn primary", disabled: Math.abs(total - 100) > 0.05 ? true : null, onclick: acceptProposal }, `Use this blend as ${nextTrialLabel()}`),
-      h("span", { class: "hint" }, "It is saved with the prediction and the recommended Pb. Add the lab results in Trials when you have them.")));
+function baileyInputsBlock(t) {
+  const bi = t.bailey_inputs = t.bailey_inputs || defaultBaileyInputs();
+  const ti = typeInfo();
+  const ca = readySlots().filter((s) => S.meta.kind[s] === "CA"), fa = readySlots().filter((s) => S.meta.kind[s] === "FA");
+  const field = (label, get, set, stepv, note) => {
+    const inp = h("input", { type: "text", inputmode: "decimal", value: get() ?? "", "aria-label": label });
+    inp.addEventListener("input", () => { set(num(inp.value)); changed(); runForward(t); });
+    const st = (d) => { const v = Math.max(0, +((num(get()) || 0) + d).toFixed(1)); inp.value = v; set(v); changed(); runForward(t); };
+    return h("div", { class: "bifield" }, h("span", { class: "l" }, label),
+      h("span", { class: "stepper" }, h("button", { class: "stp", "aria-label": "Lower " + label, onclick: () => st(-stepv) }, "−"), inp, h("button", { class: "stp", "aria-label": "Raise " + label, onclick: () => st(stepv) }, "+")),
+      note ? h("span", { class: "n" }, note) : null);
+  };
+  const box = h("section", { class: "card" }, h("h2", {}, "Your blend, from Bailey inputs"),
+    h("p", { class: "hint" }, `Set the coarse unit weight and how the piles share each fraction by volume. ${(S.mix.materials.F1?.name || "").trim() ? matName("F1") + " is set to hit the #200 target." : "Add a filler as Filler 1 to control the #200."} The same steps as the Bailey volume blending sheet, done live.`));
+  box.append(h("div", { class: "bigrid" },
+    field(`Coarse unit weight, ${ti.uw_label.replace("CA ", "")}`, () => bi.cuw, (v) => (bi.cuw = v), 1, `typical ${ti.uw_range[0]} to ${ti.uw_range[1]}`),
+    field("Passing #200 target, %", () => bi.dust, (v) => (bi.dust = v), 0.5, "set by Filler 1"),
+    (S.mix.materials.F2?.name || "").trim() ? field(`${matName("F2")}, % fixed`, () => bi.f2, (v) => (bi.f2 = v), 0.5, "Filler 2") : null));
+  const split = (arr, key, title) => h("div", { class: "split" }, h("div", { class: "l" }, title),
+    arr.map((s) => field(matName(s), () => bi[key][s] ?? 0, (v) => (bi[key][s] = v), 5, null)),
+    h("div", { class: "n", id: "sum-" + key }, ""));
+  box.append(h("div", { class: "splits" }, split(ca, "ca_vol", "Coarse piles, % by volume (total 100)"), split(fa, "fa_vol", "Fine piles, % by volume (total 100)")));
+  box.append(h("div", { class: "l", style: "margin-top:14px" }, "Resulting blend, % by mass"), h("div", { class: "chips5", id: "bi-result" }));
+  box.append(h("p", { class: "hint" }, "Switch to Stockpile % to fine-tune pile by pile. The blend carries over."));
+  return box;
 }
-function balanceProposal() {
-  const free = readySlots().filter((s) => !S.locks[s]);
-  if (!free.length) return;
-  const total = readySlots().reduce((x, s) => x + (S.proposal[s] || 0), 0);
-  const big = free.reduce((a, s) => ((S.proposal[s] || 0) > (S.proposal[a] || 0) ? s : a), free[0]);
-  S.proposal[big] = +((S.proposal[big] || 0) + 100 - total).toFixed(1);
-  repredict();
-}
-function nextTrialLabel() { return "Trial " + nextTrialId().slice(1); }
-async function repredict() {
-  clearTimeout(repredict._t);
-  repredict._t = setTimeout(async () => {
+async function runForward(t) {
+  clearTimeout(runForward._t);
+  runForward._t = setTimeout(async () => {
+    const bi = t.bailey_inputs; if (!bi) return;
+    const sumv = (o) => Object.values(o || {}).reduce((a, b) => a + (num(b) || 0), 0);
+    ["ca_vol", "fa_vol"].forEach((k) => { const e = $("#sum-" + k); if (e) { const v = sumv(bi[k]); e.textContent = `Total ${fmt(v, 1)}%`; e.className = "n " + (Math.abs(v - 100) > 0.05 ? "st-high" : "st-ok"); } });
+    const out = $("#bi-result");
     try {
-      const r = await api("/api/predict", { mix: S.mix, ref: S.ref, pct: S.proposal });
-      S.proposalPred = r;
-      const active = document.activeElement, idx = active?.dataset?.r;
-      drawProposal(); renderSide();
-      if (idx != null) { const el = $(`#proposal input[data-r="${idx}"]`); if (el) { el.focus(); const n = el.value.length; el.setSelectionRange(n, n); } }
-    } catch (e) { console.error(e); }
-  }, 250);
+      if (Math.abs(sumv(bi.ca_vol) - 100) > 0.05 || Math.abs(sumv(bi.fa_vol) - 100) > 0.05) throw new Error("Each volume split must total 100%.");
+      const r = await api("/api/forward", { mix: S.mix, cuw: bi.cuw, ca_vol: bi.ca_vol, fa_vol: bi.fa_vol, dust: bi.dust ?? 0, f2: bi.f2 || 0, nmas: S.an?.nmas || num(S.mix.settings.nmas_override) || 12.5 });
+      readySlots().forEach((s) => (t.pct[s] = num(r.blend.pct[s]) || 0));
+      if (out) { out.innerHTML = ""; readySlots().forEach((s) => out.append(h("div", { class: "chip5" }, h("i", { style: `background:${slotColor(s)}` }), h("span", {}, matName(s)), h("b", {}, fmt(t.pct[s], 1)))));
+        out.append(h("div", { class: "chip5 note" }, h("span", {}, "Coarse volume"), h("b", {}, fmt(r.blend.vol_ca, 1) + "%"))); }
+      scheduleSave(); liveUpdate(t, true);
+    } catch (e) { if (out) { out.innerHTML = ""; out.append(h("div", { class: "warnline" }, e.message)); } }
+  }, 150);
 }
-function acceptProposal() {
-  const P = S.proposalPred.prediction;
-  const pct = {}; readySlots().forEach((s) => (pct[s] = +(S.proposal[s] || 0).toFixed(1)));
-  const t = addTrial(pct, { source: "tool", prediction: P, option: S.optKey, reference: S.ref });
-  t.results.pb = P.pb != null ? +P.pb.toFixed(1) : null;
-  S.suggestion = null; S.proposal = null; S.step = "trials";
-  changed({ now: true }); renderWork(); toast(`${t.label} added with Pb ${fmt(t.results.pb, 1)}%`);
-}
-UPDATE.next = () => {};
 
-/* ---------------------------------------------------------------- side panel and charts */
-const SLOT_COLORS = { CA1: "#1F62B8", CA2: "#4C98E6", CA3: "#0D3D78", FA1: "#2B9A56", FA2: "#7AC46F", FA3: "#196B3B", F1: "#8E3FB3", F2: "#D65BB5" };
-const slotColor = (s) => SLOT_COLORS[s] || "#666";
-const C_CUR = "#D9730B", C_PROP = "#0B8B8E", C_OLD = "#A9B0B4";
-function renderSide() {
-  const side = $("#side"); if (!side) return;
-  side.innerHTML = "";
-  const nmas = S.an?.nmas;
-  const cps = S.mix.control_points || {};
-  if (S.step === "materials") {
-    const series = readySlots().map((s) => ({ name: matName(s), grad: S.mix.materials[s].grad, color: slotColor(s), cls: "pile" }));
-    side.append(h("div", {}, h("h4", {}, "Stockpile gradations", scaleToggle()), chartBox(gradChart({ series, nmas, cps: {} }), series), gradTable(series, null)),
-      h("p", { class: "caption" }, nmas ? "Dashed lines mark the Bailey control sieves for the design NMAS. Shaded area is the coarse fraction, retained on the PCS." : "Control sieves appear once trial 1 sets the NMAS."));
-    return;
-  }
-  let series = [], focus = null, prop = null;
-  const trials = S.mix.trials || [];
-  trials.forEach((t) => {
-    const a = anTrial(t.id); if (!a?.gradation) return;
-    const g = S.chartBasis === "volume" ? a.gradation_volume : a.gradation;
-    const sel = S.step === "next" ? t.id === S.ref : t.id === S.selTrial;
-    series.push({ name: t.label, grad: g, cls: sel ? "cur" : "old", color: sel ? C_CUR : C_OLD });
-    if (sel) focus = a;
-  });
-  if (S.step === "next" && S.proposalPred) {
-    const A = S.proposalPred.analysis;
-    prop = A;
-    series.push({ name: "Proposed", grad: S.chartBasis === "volume" ? A.gradation_volume : A.gradation, cls: "prop", color: C_PROP });
-  }
-  series.sort((a, b) => (a.cls === "old" ? -1 : 1) - (b.cls === "old" ? -1 : 1));
-  const tg = h("button", { class: "btn link toggle", onclick: () => { S.chartBasis = S.chartBasis === "mass" ? "volume" : "mass"; renderSide(); } }, S.chartBasis === "mass" ? "By volume" : "By mass");
-  side.append(h("h4", {}, `Combined gradation, by ${S.chartBasis}`, h("span", { class: "row", style: "gap:12px" }, scaleToggle(), tg)), chartBox(gradChart({ series, nmas, cps }), series, true),
-    gradTable(series.slice().sort((a, b) => ORD[a.cls] - ORD[b.cls]), cps),
-    h("p", { class: "caption" }, nmas ? `${nmas} mm NMAS. Half ${S.an.control.half}, PCS ${S.an.control.pcs}, SCS ${S.an.control.scs} and TCS ${S.an.control.tcs} mm. The shaded side is the coarse fraction. Teal band: your control points.` : "Add trial 1 to see the blend."));
-  if (focus) {
-    side.append(h("h4", {}, S.step === "next" ? "Bailey principles: start vs proposed" : `Bailey principles: ${trialById(focus.id)?.label || ""}`), gauges(focus, prop));
-  }
-  const done = tested();
-  if (done.length && S.step !== "next") side.append(h("h4", { style: "margin-top:20px" }, "VMA and air voids by trial"), historyChart(done));
-  if (S.step === "next" && prop) side.append(h("p", { class: "caption" }, "Orange: start trial. Teal dashed: proposed blend."));
-}
-const ORD = { cur: 0, prop: 1, old: 2, pile: 3 };
-/* the numbers behind the chart, one row per line, in the line colour */
-function gradTable(series, cps) {
-  const keys = sieves();
-  const lim = (k) => { const v = (cps || {})[k] || {}; return { lo: num(v.min), hi: num(v.max), slo: num(v.soft_min), shi: num(v.soft_max) }; };
-  const rng = (a, b) => (a == null && b == null ? "" : `${a ?? ""}-${b ?? ""}`);
-  const hasCp = cps && keys.some((k) => lim(k).lo != null || lim(k).hi != null);
-  const hasSoft = cps && keys.some((k) => lim(k).slo != null || lim(k).shi != null);
-  const rows = series.filter((r) => r.grad).map((r) => h("tr", { class: "gv-" + (r.cls || "") },
-    h("th", { class: "rowh", style: `--k:${r.color}` }, h("i", { class: "sw" }), r.name),
-    keys.map((k) => {
-      const v = num(r.grad[k]); if (v == null) return h("td", {}, "");
-      const L = lim(k); let c = "";
-      if (cps && r.cls !== "pile") {
-        if ((L.lo != null && v < L.lo - 1e-9) || (L.hi != null && v > L.hi + 1e-9)) c = "out";
-        else if ((L.slo != null && v < L.slo - 1e-9) || (L.shi != null && v > L.shi + 1e-9)) c = "softout";
-      }
-      return h("td", { class: c, style: r.cls === "old" ? "" : `color:${r.color}`, title: c === "out" ? "Outside the control point" : c === "softout" ? "Outside the soft target" : null }, fmt(v, 1));
-    })));
-  if (hasCp) rows.push(h("tr", { class: "gv-lim" }, h("th", { class: "rowh" }, "Control points"), keys.map((k) => h("td", {}, rng(lim(k).lo, lim(k).hi)))));
-  if (hasSoft) rows.push(h("tr", { class: "gv-lim soft" }, h("th", { class: "rowh" }, "Soft targets"), keys.map((k) => h("td", {}, rng(lim(k).slo, lim(k).shi)))));
-  if (!rows.length) return document.createTextNode("");
-  const id = "gv-" + Math.random().toString(36).slice(2, 7);
-  return h("div", { class: "gvals" },
-    h("div", { class: "gridwrap" }, h("table", { class: "grid gv", id },
-      h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "% passing"), keys.map((k) => h("th", {}, lab(k)[0].replace(" mm", ""), h("small", {}, lab(k)[1]))))),
-      h("tbody", {}, rows))),
-    h("div", { class: "row", style: "margin-top:4px" }, h("button", { class: "btn link", style: "font-size:12px;padding:2px 0", onclick: () => copyGrid("#" + id) }, "Copy values for Excel"),
-      cps ? h("span", { class: "hint", style: "font-size:11.5px" }, "Red: outside a control point. Underlined: outside a soft target.") : null));
-}
-function chartBox(svg, series, legend) {
-  const box = h("div", { class: "chart", html: svg });
-  if (legend && series.length) box.append(h("div", { class: "legend" }, series.filter((s) => s.cls !== "old").concat(series.filter((s) => s.cls === "old").slice(-3)).map((s) => h("span", { class: s.cls === "prop" ? "dash" : "", style: `color:${s.color}` }, h("i"), h("span", { style: "color:var(--graphite)" }, s.name))),
-    S.an?.nmas ? h("span", { class: "dash", style: "color:#6B7780" }, h("i"), "max density line") : null,
-    Object.values(S.mix.control_points || {}).some((v) => v && (num(v.min) != null || num(v.max) != null)) ? h("span", { style: "color:var(--teal)" }, h("i", { style: "height:8px;opacity:.35" }), h("span", { style: "color:var(--graphite)" }, "control points")) : null,
-    Object.values(S.mix.control_points || {}).some((v) => v && (num(v.soft_min) != null || num(v.soft_max) != null)) ? h("span", { class: "softleg" }, h("i"), h("span", { style: "color:var(--graphite)" }, "soft targets")) : null));
-  else if (series.length) box.append(h("div", { class: "legend" }, series.map((s) => h("span", { style: `color:${s.color}` }, h("i"), h("span", { style: "color:var(--graphite)" }, s.name)))));
+function binderBlock(t, tested) {
+  const box = h("section", { class: "card binder" });
+  const inp = h("input", { type: "text", inputmode: "decimal", value: num(t.results?.pb) != null ? fmt(t.results.pb, 1) : "", "aria-label": "Binder content, %", class: "pb" });
+  const setPb = (v) => { t.results = t.results || {}; t.results.pb = v; changed(); liveUpdate(t); };
+  inp.addEventListener("input", () => setPb(num(inp.value)));
+  const st = (d) => { const v = Math.max(0, +((num(t.results?.pb) || 0) + d).toFixed(1)); inp.value = fmt(v, 1); setPb(v); };
+  box.append(h("div", {}, h("h2", {}, tested ? "Binder content tested" : "Binder"),
+    h("span", { class: "stepper big" }, h("button", { class: "stp", "aria-label": "Less binder", onclick: () => st(-0.1) }, "−"), inp, h("button", { class: "stp", "aria-label": "More binder", onclick: () => st(0.1) }, "+"), h("span", { class: "u" }, "% Pb"))),
+    h("div", { id: "pb-note", class: "pbnote" }));
   return box;
 }
 
+/* live prediction for the trial being edited */
+function liveUpdate(t, now) {
+  clearTimeout(liveUpdate._t);
+  liveUpdate._t = setTimeout(async () => {
+    try {
+      if (t.ref && isTested(t.ref) && t.ref !== t.id) {
+        const r = await api("/api/predict", { mix: S.mix, ref: t.ref, pct: t.pct });
+        S.live[t.id] = { pred: r.prediction, an: r.analysis };
+        if (!isTested(t.id)) { t.prediction = r.prediction; t.reference = t.ref; scheduleSave(); }
+      } else {
+        const a = await api("/api/preview", { mix: S.mix, pct: t.pct });
+        S.live[t.id] = { an: a };
+      }
+    } catch (e) { S.live[t.id] = { error: e.message }; }
+    if (S.sel === t.id && S.tab === "trials") {
+      const side = $(".side"); if (side && S.sub === "blend") renderBlendSide(side, t);
+      if (S.sub === "blend") updatePbNote(t);
+      const rail = $(".rail"); if (rail) renderRail(rail);
+    }
+  }, now ? 0 : 140);
+}
+const vaAtPb = (p, pb) => (p && pb != null) ? p.va_at_pb - (pb - p.pb) * (p.ac_factor || 2.25) : null;
+function updatePbNote(t) {
+  const e = $("#pb-note"); if (!e) return;
+  e.innerHTML = "";
+  const L = S.live[t.id], p = L?.pred, est = L?.an?.est_pb;
+  if (p) {
+    const pb = num(t.results?.pb);
+    e.append(h("div", {}, `Recommended for ${fmt(S.mix.targets?.va, 1)}% air voids: `, h("b", {}, fmt(p.pb, 2) + "%"), ". ",
+      pb == null || Math.abs(pb - p.pb) > 0.049 ? h("button", { class: "btn link", onclick: () => { t.results.pb = +p.pb.toFixed(1); changed(); render(); } }, "Use it") : null));
+    e.append(h("div", { class: "hint" }, `Once VMA is within ±${tolVMA()} of target, keep the blend and change only the binder.`));
+  } else if (est) {
+    e.append(h("div", {}, "Starting estimate from your targets and absorption: ", h("b", {}, fmt(est.pb, 1) + "%"), ` (Pba ${fmt(est.pba, 2)} plus Pbe ${fmt(est.pbe, 2)}). `,
+      num(t.results?.pb) == null ? h("button", { class: "btn link", onclick: () => { t.results.pb = +est.pb.toFixed(1); changed(); render(); } }, "Use it") : null));
+  } else e.append(h("div", { class: "hint" }, "Set VMA and air-void targets in Criteria to get a binder estimate."));
+}
+function phaseOf(vma) {
+  const vt = num(S.mix.targets?.vma);
+  if (vt == null || vma == null) return null;
+  return Math.abs(vma - vt) <= tolVMA() ? ["on", "VMA on target: tune binder"] : ["off", "Adjusting blend for VMA"];
+}
+
+function renderBlendSide(side, t) {
+  side.innerHTML = "";
+  const L = S.live[t.id] || {}, A = L.an, P = L.pred;
+  const tested = isTested(t.id);
+  const ph = $("#t-phase");
+  const tg = S.mix.targets || {};
+  if (tested) { renderTrialSide(side, t); return; }
+  if (P) {
+    const pb = num(t.results?.pb) ?? P.pb;
+    const va = vaAtPb(P, pb);
+    const vfa = P.vma ? 100 * (P.vma - va) / P.vma : null;
+    const pz = phaseOf(P.vma);
+    if (ph) { ph.textContent = pz ? pz[1] : ""; ph.className = "phase " + (pz ? pz[0] : ""); }
+    const off = (v, t0, d) => (t0 == null || v == null) ? "" : Math.abs(v - t0) < 0.05 ? "on target" : `${fmt(Math.abs(v - t0), d)} ${v > t0 ? "above" : "below"} ${fmt(t0, d)}`;
+    const okc = (v, t0, tol) => (t0 == null || v == null) ? "" : Math.abs(v - t0) <= tol ? "ok" : "off";
+    const st = A?.status || {};
+    const ref = trialById(t.ref), refA = anTrial(t.ref);
+    const card = h("div", { class: "card live" }, h("div", { class: "cardhead" }, h("h2", {}, "Predicted, live"), h("span", { class: "hint" }, `from ${ref?.label} by rules of thumb`)),
+      h("div", { class: "kpi3" },
+        h("div", {}, h("span", { class: "k" }, "VMA"), h("b", {}, fmt(P.vma, 1) + "%"), h("span", { class: "n " + okc(P.vma, num(tg.vma), tolVMA()) }, off(P.vma, num(tg.vma), 1))),
+        h("div", {}, h("span", { class: "k" }, `Air voids at ${fmt(pb, 1)}%`), h("b", {}, fmt(va, 1) + "%"), h("span", { class: "n " + okc(va, num(tg.va), 0.2) }, off(va, num(tg.va), 1))),
+        h("div", {}, h("span", { class: "k" }, "VFA"), h("b", {}, fmt(vfa, 1) + "%"), h("span", { class: "n" }, P.vca_mix != null ? `VCAmix ${fmt(P.vca_mix, 1)}%` : ""))),
+      h("div", { class: "k", style: "margin-top:12px" }, "Where the VMA change comes from"),
+      h("div", { class: "terms" }, Object.entries(P.terms).map(([k, x]) => h("div", {}, h("span", {}, k === "PCS" ? "Coarse volume" : k + " ratio"), h("b", { class: x > 0.005 ? "up" : x < -0.005 ? "down" : "" }, sgn(x, 2))))),
+      h("div", { class: "k", style: "margin-top:12px" }, `Bailey values: ${ref?.label} (grey) and ${t.label} (navy)`),
+      baileyBars(refA, A),
+      warnList(t, A, P));
+    side.append(card);
+  } else if (A) {
+    if (ph) { ph.textContent = ""; ph.className = "phase"; }
+    side.append(h("div", { class: "card live" }, h("h2", {}, "This blend"),
+      h("p", { class: "hint" }, t.ref ? "Prediction needs the reference trial to be tested." : "VMA and binder can only be predicted after a trial is tested. This one sets the baseline."),
+      baileyBars(null, A), warnList(t, A, null)));
+  } else if (L.error) side.append(h("div", { class: "notice" }, L.error));
+  const series = [];
+  if (t.ref && anTrial(t.ref)?.gradation) series.push({ name: trialById(t.ref).label, grad: anTrial(t.ref)[S.chartBasis === "volume" ? "gradation_volume" : "gradation"], cls: "ref", color: C_REF });
+  if (A?.gradation) series.push({ name: t.label, grad: A[S.chartBasis === "volume" ? "gradation_volume" : "gradation"], cls: "prop", color: C_PROP });
+  side.append(chartCard(series, A?.nmas || S.an?.nmas));
+}
+function warnList(t, A, P) {
+  const w = [];
+  if (!A) return null;
+  const st = A.status || {};
+  (st.control_points || []).forEach((c) => w.push(`${sieveName(c.sieve)} is ${fmt(c.value, 1)}%, ${c.side === "low" ? "below" : "above"} its control point.`));
+  (st.soft_points || []).forEach((c) => w.push(`${sieveName(c.sieve)} is ${fmt(c.value, 1)}%, outside your soft target of ${c.lo ?? "..."} to ${c.hi ?? "..."}%.`));
+  const [small, mn] = smallPiles(t.pct, t.locks);
+  small.forEach(([s, x]) => w.push(`${matName(s)} is ${fmt(x, 1)}%, below your ${fmt(mn, 1)}% minimum.`));
+  if (Math.abs(pctSum(t.pct) - 100) > 0.05) w.push(`The blend totals ${fmt(pctSum(t.pct), 1)}%. It must be 100.`);
+  if (A.nmas_detected && S.an?.nmas && A.nmas_detected !== S.an.nmas) w.push(`This blend reads as ${A.nmas_detected} mm NMAS, not ${S.an.nmas} mm.`);
+  if (P?.large_moves?.length) w.push(`Large change in ${P.large_moves.join(", ")}. The rules of thumb are linear, so treat this as a direction.`);
+  const vcad = num(S.mix.targets?.vcadrc);
+  if (vcad && P?.vca_mix > vcad) w.push(`Predicted VCAmix ${fmt(P.vca_mix, 1)}% is above VCA dry-rodded ${fmt(vcad, 1)}%.`);
+  (A.warnings || []).forEach((x) => w.push(x));
+  if (!w.length) return h("div", { class: "okline" }, "All control points and soft targets met.");
+  return h("ul", { class: "warns" }, w.map((x) => h("li", {}, x)));
+}
+function baileyBars(refA, A) {
+  if (!A) return null;
+  const rng = S.mix.bailey_ranges || S.an?.default_ranges || {};
+  const isFG = mixType() === "fg";
+  const rows = [["ca_ruw", typeInfo().uw_label, (a) => a?.bailey?.cuw_pct, 1, [Math.min(50, (rng.ca_ruw?.[0] ?? 100) - 20), (rng.ca_ruw?.[1] ?? 120) + 15]],
+    ["CA", (isFG ? "New " : "") + "CA", (a) => a?.ratios?.CA, 2, [0, isFG ? 1.4 : 1.0]], ["FAc", (isFG ? "New " : "") + "FAc", (a) => a?.ratios?.FAc, 2, [0.2, 1.0]], ["FAf", (isFG ? "New " : "") + "FAf", (a) => a?.ratios?.FAf, 2, [0.2, 1.0]]];
+  return h("div", { class: "bars" }, rows.map(([k, t, get, d, dom]) => {
+    const v = get(A), r = refA ? get(refA) : null, R = rng[k] || [];
+    if (v == null) return null;
+    const lo = Math.min(dom[0], v, r ?? v), hi = Math.max(dom[1], v, r ?? v);
+    const pos = (x) => (100 * (x - lo) / (hi - lo)).toFixed(1);
+    const inR = (x) => (R[0] == null || x >= R[0]) && (R[1] == null || x <= R[1]);
+    const dist = (x) => (R[0] != null && x < R[0] ? R[0] - x : R[1] != null && x > R[1] ? x - R[1] : 0);
+    const arrow = r == null ? "" : v > r + Math.pow(10, -d) / 2 ? "↑" : v < r - Math.pow(10, -d) / 2 ? "↓" : "=";
+    const cls = r == null ? "" : dist(v) < dist(r) - 1e-6 ? "better" : dist(v) > dist(r) + 1e-6 ? "worse" : "";
+    return h("div", { class: "bar" }, h("span", { class: "bk" }, t),
+      h("span", { class: "track" }, (R[0] != null || R[1] != null) ? h("i", { class: "rng", style: `left:${pos(R[0] ?? lo)}%;width:${pos(R[1] ?? hi) - pos(R[0] ?? lo)}%` }) : null,
+        r != null ? h("i", { class: "ref", style: `left:calc(${pos(r)}% - 1px)` }) : null,
+        h("i", { class: "cur " + (inR(v) ? "in" : "out"), style: `left:calc(${pos(v)}% - 2px)` })),
+      h("span", { class: "bv" }, r != null ? [fmt(r, d), " ", h("span", { class: "arw " + cls }, arrow), " "] : null, h("b", {}, fmt(v, d))));
+  }));
+}
+
+/* ---------- lab data */
+const T209_MIN = { 37.5: 4000, 25: 2500, 19: 2000, 12.5: 1500, 9.5: 1000, 4.75: 500 };
+function labOf(t) {
+  t.results = t.results || {};
+  const r = t.results;
+  if (!r.lab) {
+    r.lab = { mix_mass: null, n_spec: 2, gmm_mass: null, ndes: null, mold: 150, temp: null, height: 115,
+      specimens: (r.gmb && r.gmb.length ? r.gmb : [null, null]).map((g) => ({ h: null, a: null, b: null, c: null, gmb: num(g) })),
+      rice: (r.gmm && r.gmm.length ? r.gmm : [null, null]).map((g) => ({ a: null, d: null, e: null, gmm: num(g) })) };
+  }
+  return r.lab;
+}
+const gmbOf = (s) => (num(s.a) && num(s.b) != null && num(s.c) != null && num(s.b) - num(s.c) > 0) ? num(s.a) / (num(s.b) - num(s.c)) : num(s.gmb);
+const absOf = (s) => (num(s.a) && num(s.b) != null && num(s.c) != null && num(s.b) - num(s.c) > 0) ? 100 * (num(s.b) - num(s.a)) / (num(s.b) - num(s.c)) : null;
+const gmmOf = (s) => (num(s.a) && num(s.d) != null && num(s.e) != null && (num(s.a) + num(s.d) - num(s.e)) > 0) ? num(s.a) / (num(s.a) + num(s.d) - num(s.e)) : num(s.gmm);
+function syncLab(t) {
+  const L = labOf(t);
+  t.results.gmb = L.specimens.map(gmbOf).filter((x) => x != null).map((x) => +x.toFixed(4));
+  t.results.gmm = L.rice.map(gmmOf).filter((x) => x != null).map((x) => +x.toFixed(4));
+}
+function renderLab(body, side, t) {
+  const L = labOf(t), idx = S.mix.trials.indexOf(t);
+  const P = ["trials", idx, "results", "lab"];
+  const inp = (path, opts = {}) => { const i = numInput(path, opts); i.addEventListener("input", () => { syncLab(t); updLab(); }); return i; };
+  body.append(h("p", { class: "intro" }, "Batch masses for the specimens, then what you measured. Type the raw masses, or just the final Gmb and Gmm in the last column. Results update as you type."));
+  // batch sheet
+  const batch = h("tbody", { id: "batch-body" });
+  body.append(h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "A. Batch sheet"), h("span", { class: "hint" }, "per gyratory specimen")),
+    h("div", { class: "fgrid four" },
+      h("label", { class: "f" }, h("span", {}, "Total mix mass, g"), inp(P.concat("mix_mass"), { placeholder: "e.g. 4700" })),
+      h("label", { class: "f" }, h("span", {}, "Binder Pb, %"), (() => { const i = numInput(["trials", idx, "results", "pb"]); i.addEventListener("input", () => updLab()); return i; })()),
+      h("label", { class: "f" }, h("span", {}, "Mold diameter, mm"), inp(P.concat("mold"))),
+      h("label", { class: "f" }, h("span", {}, "Target height, mm"), inp(P.concat("height")))),
+    h("div", { class: "helper", id: "mass-helper" }),
+    h("table", { class: "grid compact wide" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Ingredient"), h("th", {}, "% of aggregate"), h("th", {}, "Mass, g"), h("th", {}, "Cumulative on scale, g"))), batch)));
+  body.append(h("section", { class: "card" }, h("h2", {}, "B. Compaction"),
+    h("div", { class: "fgrid four" },
+      h("label", { class: "f" }, h("span", {}, "Design gyrations, Ndes"), inp(P.concat("ndes"))),
+      h("label", { class: "f" }, h("span", {}, "Compaction temperature, °C"), inp(P.concat("temp"), { placeholder: "optional" })),
+      h("label", { class: "f" }, h("span", {}, "Gmm sample mass, g"), inp(P.concat("gmm_mass"), { placeholder: "optional" })),
+      h("label", { class: "f" }, h("span", {}, "VCA dry-rodded, %"), numInput(["trials", idx, "results", "vcadrc"], { placeholder: "optional" })))));
+  // Gmb
+  const gb = h("tbody", {});
+  L.specimens.forEach((s, i) => gb.append(h("tr", {}, h("th", { class: "rowh" }, `Specimen ${i + 1}`),
+    ["h", "a", "b", "c"].map((k, c) => h("td", {}, inp(P.concat(["specimens", i, k]), { grid: [i, c, "gmb" + idx] }))),
+    h("td", { class: "calc", id: `gabs-${i}` }, "-"), h("td", {}, inp(P.concat(["specimens", i, "gmb"]), { grid: [i, 4, "gmb" + idx], cls: "result" })))));
+  body.append(h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "C. Bulk specific gravity, Gmb"), h("span", { class: "hint" }, "AASHTO T 166")),
+    h("table", { class: "grid compact wide" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, ""), h("th", {}, "Height, mm"), h("th", {}, "Dry mass A, g"), h("th", {}, "SSD mass B, g"), h("th", {}, "In water C, g"), h("th", {}, "Water absorbed, %"), h("th", {}, "Gmb"))), gb),
+    h("div", { class: "row note" }, h("button", { class: "btn link", onclick: () => { L.specimens.push({}); changed(); render(); } }, "Add a specimen"),
+      L.specimens.length > 1 ? h("button", { class: "btn link", onclick: () => { L.specimens.pop(); syncLab(t); changed({ now: true }); render(); } }, "Remove last") : null,
+      h("span", { class: "hint", id: "gmb-note" }))));
+  const rb = h("tbody", {});
+  L.rice.forEach((s, i) => rb.append(h("tr", {}, h("th", { class: "rowh" }, `Sample ${i + 1}`),
+    ["a", "d", "e"].map((k, c) => h("td", {}, inp(P.concat(["rice", i, k]), { grid: [i, c, "gmm" + idx] }))),
+    h("td", {}, inp(P.concat(["rice", i, "gmm"]), { grid: [i, 3, "gmm" + idx], cls: "result" })))));
+  body.append(h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "D. Maximum specific gravity, Gmm"), h("span", { class: "hint" }, "AASHTO T 209, weighing in water")),
+    h("table", { class: "grid compact wide" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, ""), h("th", {}, "Dry mass A, g"), h("th", {}, "Container and water D, g"), h("th", {}, "Container, water and sample E, g"), h("th", {}, "Gmm"))), rb),
+    h("div", { class: "row note" }, h("button", { class: "btn link", onclick: () => { L.rice.push({}); changed(); render(); } }, "Add a sample"),
+      L.rice.length > 1 ? h("button", { class: "btn link", onclick: () => { L.rice.pop(); syncLab(t); changed({ now: true }); render(); } }, "Remove last") : null,
+      h("span", { class: "hint", id: "gmm-note" }))));
+  const updLab = () => {
+    // computed gmb cells: show calculated value as placeholder in the result box
+    L.specimens.forEach((s, i) => {
+      const a = absOf(s), e = $(`#gabs-${i}`); if (e) { e.textContent = a == null ? "-" : fmt(a, 2); e.className = "calc " + (a == null ? "" : a > 2 ? "st-high" : "st-ok"); }
+      const box = $(`input[data-g="gmb${idx}"][data-r="${i}"][data-c="4"]`); if (box) box.placeholder = gmbOf({ ...s, gmb: null }) != null ? fmt(gmbOf({ ...s, gmb: null }), 3) : "";
+    });
+    L.rice.forEach((s, i) => { const box = $(`input[data-g="gmm${idx}"][data-r="${i}"][data-c="3"]`); if (box) box.placeholder = gmmOf({ ...s, gmm: null }) != null ? fmt(gmmOf({ ...s, gmm: null }), 3) : ""; });
+    const gn = $("#gmb-note"); if (gn) gn.textContent = L.specimens.some((s) => (absOf(s) || 0) > 2) ? "Above 2% water absorbed: use the vacuum-sealing method, AASHTO T 331." : "";
+    const nm = S.an?.nmas, mn = T209_MIN[nm];
+    const mm = $("#gmm-note"); if (mm) mm.textContent = mn ? `Minimum sample for ${nm} mm NMAS: ${mn.toLocaleString()} g.${L.rice.some((s) => num(s.a) && num(s.a) < mn) ? " One sample is below it." : ""}` : "";
+    // batch
+    const pb = num(t.results.pb), mass = num(L.mix_mass);
+    batch.innerHTML = "";
+    let cum = 0;
+    const agg = mass && pb != null ? mass * (1 - pb / 100) : null;
+    readySlots().filter((s) => (num(t.pct[s]) || 0) > 0).forEach((s) => {
+      const g = agg != null ? agg * (num(t.pct[s]) || 0) / 100 : null; if (g != null) cum += g;
+      batch.append(h("tr", {}, h("th", { class: "rowh" }, h("i", { class: "sw", style: `background:${slotColor(s)}` }), matName(s)), h("td", { class: "calc" }, fmt(t.pct[s], 1)), h("td", { class: "calc strong" }, g == null ? "-" : g.toFixed(1)), h("td", { class: "calc" }, g == null ? "-" : cum.toFixed(1))));
+    });
+    const fib = num(S.mix.settings.fiber_pct);
+    batch.append(h("tr", { class: "total" }, h("th", { class: "rowh" }, "Aggregate total"), h("td", { class: "calc" }, fmt(pctSum(t.pct), 1)), h("td", { class: "calc strong" }, agg == null ? "-" : agg.toFixed(1)), h("td", {})),
+      h("tr", {}, h("th", { class: "rowh" }, `Binder (${fmt(pb, 1)}% of total mix)`), h("td", {}), h("td", { class: "calc strong" }, agg == null ? "-" : (mass * pb / 100).toFixed(1)), h("td", {})),
+      fib ? h("tr", {}, h("th", { class: "rowh" }, `${S.mix.settings.fiber_type || "Fiber"} (${fmt(fib, 1)}% of total mix)`), h("td", {}), h("td", { class: "calc strong" }, mass ? (mass * fib / 100).toFixed(1) : "-"), h("td", {})) : null);
+    const helper = $("#mass-helper"); helper.innerHTML = "";
+    const D = num(L.mold) || 150, H = num(L.height) || 115;
+    const prev = testedAn().filter((a) => a.id !== t.id).pop();
+    const g = anTrial(t.id)?.volumetrics?.gmb || t.prediction?.gmb || prev?.volumetrics?.gmb;
+    if (g) {
+      const m = g * Math.PI * Math.pow(D / 20, 2) * (H / 10);
+      helper.append(h("span", {}, `For a ${H} mm specimen in a ${D} mm mold at Gmb ${fmt(g, 3)}, use about `, h("b", {}, Math.round(m).toLocaleString() + " g"), ". "),
+        h("button", { class: "btn link", onclick: () => { L.mix_mass = Math.round(m); changed(); render(); } }, "Use this mass"));
+    } else helper.append(h("span", { class: "hint" }, "Once a Gmb is known, the tool suggests the mass for your target height."));
+    renderTrialSide(side, t);
+  };
+  updLab();
+  S.refresh = updLab;
+  S.beforeAnalyze = () => syncLab(t);
+}
+
+/* ---------- results */
+function renderResults(body, side, t) {
+  const a = anTrial(t.id);
+  const v = a?.volumetrics || {};
+  const tg = S.mix.targets || {};
+  if (!v.complete) {
+    body.append(h("div", { class: "notice" }, "Enter the binder content, Gmb and Gmm in Lab data to see the results of this trial.",
+      h("button", { class: "btn small", style: "margin-left:12px", onclick: () => { S.sub = "lab"; render(); } }, "Open Lab data")));
+    renderTrialSide(side, t); S.refresh = () => renderTrialSide(side, t); return;
+  }
+  const off = (x, t0, d) => t0 == null ? ["no target", "plain"] : Math.abs(x - t0) < 0.05 ? ["on target", "ok"] : [`${fmt(Math.abs(x - t0), d)} ${x > t0 ? "above" : "below"} ${fmt(t0, d)}`, Math.abs(x - t0) <= (d === 1 ? 0.2 : 0.2) ? "ok" : "off"];
+  const vo = off(v.vma, num(tg.vma), 1), ao = off(v.va, num(tg.va), 1);
+  const vcad = num(t.results?.vcadrc) ?? num(tg.vcadrc);
+  const kp = [["VMA", fmt(v.vma, 1) + "%", vo[0], vo[1]], ["Air voids", fmt(v.va, 1) + "%", ao[0], ao[1]], ["VFA", fmt(v.vfa, 1) + "%", (tg.vfa?.[0] != null || tg.vfa?.[1] != null) ? `limits ${tg.vfa?.[0] ?? "..."} to ${tg.vfa?.[1] ?? "..."}` : "no limit set", "plain"],
+    ["VCAmix", fmt(v.vca_mix, 1) + "%", vcad ? `VCA dry-rodded ${fmt(vcad, 1)}%` : "add VCA dry-rodded to check", vcad ? (v.vca_ok ? "ok" : "off") : "plain"],
+    ["Effective binder", fmt(v.pbe, 2) + "%", `Pba ${fmt(v.pba, 2)}%, Gse ${fmt(v.gse, 3)}`, "plain"]];
+  body.append(h("div", { class: "kpis" }, kp.map(([k, val, n, c]) => h("div", { class: "kpi" }, h("span", { class: "k" }, k), h("b", {}, val), h("span", { class: "n " + c }, n)))));
+  const e = a.prediction_error;
+  if (t.prediction && e) {
+    body.append(h("section", { class: "card" }, h("h2", {}, "How the prediction did"),
+      h("div", { class: "fgrid three" },
+        h("div", {}, h("span", { class: "k" }, "VMA"), h("div", {}, h("b", {}, `Predicted ${fmt(t.prediction.vma, 1)}`), `, measured ${fmt(v.vma, 1)}. Off by ${fmt(Math.abs(e.vma), 1)}.`)),
+        h("div", {}, h("span", { class: "k" }, `Air voids at ${fmt(v.pb, 1)}% Pb`), h("div", {}, e.va_pred_at_actual_pb != null ? [h("b", {}, `Predicted ${fmt(e.va_pred_at_actual_pb, 1)}`), `, measured ${fmt(v.va, 1)}. Off by ${fmt(Math.abs(e.va), 1)}.`] : "-")),
+        h("div", {}, h("span", { class: "k" }, "What it means"), h("div", {}, Math.abs(e.vma) <= 0.5 ? "Inside the usual ±0.5% for the rules of thumb." : "Larger than the usual ±0.5%. After 3 tested trials, try fitting the rules of thumb in Criteria.")))));
+  }
+  body.append(h("section", { class: "card" }, h("h2", {}, "Bailey values"), baileyBars(null, a), h("p", { class: "hint" }, "Green band: your range from Criteria. The tick is this trial.")));
+  const w = warnList(t, a, null);
+  if (w) body.append(h("section", { class: "card" }, h("h2", {}, "Gradation checks"), w));
+  const vt = num(tg.vma), onV = vt != null && Math.abs(v.vma - vt) <= tolVMA();
+  const nxt = (S.mix.trials.length + 1);
+  body.append(h("section", { class: "next" }, h("div", { class: "grow" }, h("h2", {}, onV ? "VMA is on target: tune the binder" : `Next: plan Trial ${nxt}`),
+    h("p", {}, vt == null ? "Set a VMA target in Criteria so the tool knows where to aim." :
+      onV ? `VMA is within ±${tolVMA()} of ${fmt(vt, 1)}. Keep this blend and change the binder to reach ${fmt(tg.va, 1)}% air voids.` :
+        `VMA is ${fmt(Math.abs(v.vma - vt), 1)} ${v.vma > vt ? "above" : "below"} target, so the blend still needs a change. The tool suggests a blend and binder, and you can change any pile or the binder and watch the result update.`)),
+    h("div", { class: "col" }, h("button", { class: "btn primary", onclick: () => planNext(t.id, onV) }, onV ? "Binder only, next trial" : `Plan Trial ${nxt}`),
+      h("button", { class: "btn link", onclick: () => planNext(t.id, !onV) }, onV ? "Change the blend instead" : "Keep this blend, change binder only"))));
+  renderTrialSide(side, t);
+  const rr = () => render(); rr.isRender = true;
+  S.refresh = rr;
+}
+function renderTrialSide(side, t) {
+  side.innerHTML = "";
+  const series = [];
+  (S.mix.trials || []).forEach((x) => {
+    const a = anTrial(x.id); if (!a?.gradation) return;
+    if (x.id === t.id) return;
+    series.push({ name: x.label, grad: a[S.chartBasis === "volume" ? "gradation_volume" : "gradation"], cls: "old", color: C_OLD });
+  });
+  const a = anTrial(t.id);
+  if (a?.gradation) series.push({ name: t.label, grad: a[S.chartBasis === "volume" ? "gradation_volume" : "gradation"], cls: "cur", color: C_CUR });
+  side.append(chartCard(series, S.an?.nmas));
+  if (a && S.sub === "lab") {
+    const v = a.volumetrics || {};
+    side.append(h("div", { class: "card" }, h("h2", {}, "From these numbers"),
+      [["Gmb, average", fmt(v.gmb, 3)], ["Gmm, average", fmt(v.gmm, 3)], ["Air voids", fmt(v.va, 1) + "%"], ["VMA", fmt(v.vma, 1) + "%"], ["VFA", fmt(v.vfa, 1) + "%"]].map(([k, x]) => h("div", { class: "kv" }, h("span", {}, k), h("b", {}, x))),
+      v.complete ? h("button", { class: "btn primary block", style: "margin-top:12px", onclick: () => { S.sub = "results"; render(); } }, "See full results") : h("p", { class: "hint" }, "The trial counts as tested once Pb, Gmb and Gmm are in.")));
+  }
+}
+
+/* ---------------------------------------------------------------- 4 Compare */
+function renderCompare(page) {
+  page.classList.add("two");
+  const main = h("section", { class: "main" }), side = h("aside", { class: "side" });
+  page.append(main, side);
+  const T = S.mix.trials || [];
+  main.append(h("div", { class: "head" }, h("div", {}, h("h1", {}, "Compare trials"), h("p", { class: "intro" }, "Every trial side by side, and how the design is converging.")),
+    h("div", { class: "row" }, h("button", { class: "btn", onclick: () => copyGrid("#cmp-grid") }, "Copy for Excel"), h("button", { class: "btn", onclick: downloadMix }, "Download mix file"), h("button", { class: "btn primary", onclick: () => window.print() }, "Print"))));
+  if (!T.length) { main.append(h("div", { class: "notice" }, "No trials yet.")); return; }
+  const tg = S.mix.targets || {};
+  const rng = S.mix.bailey_ranges || S.an?.default_ranges || {};
+  const col = (t) => anTrial(t.id) || {};
+  const grp = (k) => h("tr", { class: "grp" }, h("th", { colspan: T.length + 2 }, k));
+  const row = (k, f, target) => h("tr", {}, h("th", { class: "rowh" }, k), T.map((t) => h("td", { class: "calc" + (isTested(t.id) ? "" : " planned") }, f(t, col(t)))), h("td", { class: "calc tgt" }, target ?? ""));
+  const slots = readySlots();
+  const cps = S.mix.control_points || {};
+  const keySieves = sieves().filter((s) => { const c = cps[s] || {}; return [c.min, c.max, c.soft_min, c.soft_max].some((x) => num(x) != null); });
+  const pv = (t) => S.live[t.id]?.pred || t.prediction;
+  const rows = [grp("Blend, % of aggregate"), ...slots.map((s) => row(matName(s), (t) => fmt(num(t.pct?.[s]) || 0, 1))),
+    grp("Volumetrics (planned trials show predictions)"),
+    row("Binder Pb, %", (t, a) => fmt(a.volumetrics?.pb ?? num(t.results?.pb), 1)),
+    row("VMA, %", (t, a) => a.volumetrics?.complete ? fmt(a.volumetrics.vma, 1) : (pv(t) ? fmt(pv(t).vma, 1) : "-"), num(tg.vma) != null ? fmt(tg.vma, 1) : ""),
+    row("Air voids, %", (t, a) => a.volumetrics?.complete ? fmt(a.volumetrics.va, 1) : (pv(t) ? fmt(vaAtPb(pv(t), num(t.results?.pb) ?? pv(t).pb), 1) : "-"), num(tg.va) != null ? fmt(tg.va, 1) : ""),
+    row("VFA, %", (t, a) => fmt(a.volumetrics?.vfa, 1)),
+    row("VCAmix, %", (t, a) => fmt(a.volumetrics?.vca_mix, 1)),
+    grp("Bailey"),
+    row(typeInfo().uw_label, (t, a) => fmt(a.bailey?.cuw_pct, 1), rng.ca_ruw ? `${rng.ca_ruw[0]} to ${rng.ca_ruw[1]}` : ""),
+    row("CA ratio", (t, a) => fmt(a.ratios?.CA, 2), rng.CA?.[0] != null ? `${rng.CA[0]} to ${rng.CA[1]}` : ""),
+    row("FAc ratio", (t, a) => fmt(a.ratios?.FAc, 2), rng.FAc ? `${rng.FAc[0]} to ${rng.FAc[1]}` : ""),
+    row("FAf ratio", (t, a) => fmt(a.ratios?.FAf, 2), rng.FAf ? `${rng.FAf[0]} to ${rng.FAf[1]}` : ""),
+    keySieves.length ? grp("Gradation, % passing") : null,
+    ...keySieves.map((s) => { const c = cps[s]; const lim = [c.min != null ? `${c.min} to ${c.max}` : "", c.soft_min != null ? `soft ${c.soft_min} to ${c.soft_max}` : ""].filter(Boolean).join(", ");
+      return row(`${lab(s)[0]} (${lab(s)[1]})`, (t, a) => fmt(a.gradation?.[+s] ?? a.gradation?.[s], 1), lim); })];
+  main.append(h("div", { class: "gridwrap" }, h("table", { class: "grid cmp", id: "cmp-grid" },
+    h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, ""), T.map((t) => h("th", { class: isTested(t.id) ? "" : "planned" }, t.label, h("small", {}, trialStatus(t)))), h("th", {}, "Target"))),
+    h("tbody", {}, rows))));
+  // accuracy
+  const acc = h("section", { class: "card", id: "acc" });
+  main.append(acc);
+  const mode = S.accMode || "previous";
+  const loadAcc = async () => {
+    acc.innerHTML = "";
+    const sel = h("select", { "aria-label": "Predict each trial from" }, h("option", { value: "previous", selected: mode === "previous" ? true : null }, "the trial before it"), h("option", { value: "first", selected: mode === "first" ? true : null }, "the first tested trial"));
+    sel.addEventListener("change", () => { S.accMode = sel.value; render(); });
+    acc.append(h("div", { class: "cardhead" }, h("h2", {}, "How good are the predictions?"), h("span", { class: "row" }, h("span", { class: "hint" }, "Predict each trial from"), sel)));
+    let r;
+    try { r = await api("/api/accuracy", { mix: S.mix, mode }); } catch (e) { acc.append(h("p", { class: "hint" }, e.message)); return; }
+    if (!r.rows.length) { acc.append(h("p", { class: "hint" }, "Needs two tested trials.")); return; }
+    acc.append(h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Trial"), h("th", {}, "From"), h("th", {}, "VMA predicted"), h("th", {}, "measured"), h("th", {}, "error"), h("th", {}, "Va predicted"), h("th", {}, "measured"), h("th", {}, "error"))),
+      h("tbody", {}, r.rows.map((x) => h("tr", {}, h("th", { class: "rowh" }, x.label), h("td", { class: "calc" }, x.ref_label), h("td", { class: "calc" }, fmt(x.vma_pred, 1)), h("td", { class: "calc" }, fmt(x.vma, 1)),
+        h("td", { class: "calc " + (Math.abs(x.vma_err) <= 0.5 ? "st-ok" : "st-high") }, sgn(x.vma_err, 1)), h("td", { class: "calc" }, fmt(x.va_pred, 1)), h("td", { class: "calc" }, fmt(x.va, 1)), h("td", { class: "calc" }, sgn(x.va_err, 1)))))),
+      h("p", {}, `${r.within_05} of ${r.n} within ±0.5% VMA. The goal is 8 in 10.`),
+      h("div", { class: "row" }, h("button", { class: "btn", disabled: r.tested < 3 ? true : null, onclick: () => { S.tab = "criteria"; render(); runFit(); } }, r.tested < 3 ? `Fit the rules of thumb (after 3 tested, ${r.tested} so far)` : "Fit the rules of thumb to my trials"),
+        h("span", { class: "hint" }, "Fitting keeps each factor inside its typical range for the mix type.")));
+  };
+  loadAcc();
+  // side charts
+  const done = testedAn();
+  side.append(trendCard("VMA by trial", "vma", num(tg.vma)), trendCard("Air voids by trial", "va", num(tg.va)));
+  const series = T.map((t, i) => { const a = anTrial(t.id); return a?.gradation ? { name: t.label, grad: a.gradation, cls: i === T.length - 1 ? "cur" : "old", color: i === T.length - 1 ? C_CUR : C_OLD } : null; }).filter(Boolean);
+  side.append(chartCard(series, S.an?.nmas, true));
+  S.refresh = null;
+}
+function trendCard(title, key, target) {
+  const T = S.mix.trials || [];
+  const pts = T.map((t) => {
+    const a = anTrial(t.id);
+    if (a?.volumetrics?.complete) return { x: t.label, v: a.volumetrics[key], pred: false };
+    const p = S.live[t.id]?.pred || t.prediction;
+    if (p && Math.abs(pctSum(t.pct) - 100) <= 0.05) return { x: t.label, v: key === "vma" ? p.vma : vaAtPb(p, num(t.results?.pb) ?? p.pb), pred: true };
+    return null;
+  }).filter((p) => p && p.v != null);
+  const card = h("div", { class: "card" }, h("h2", {}, title));
+  if (!pts.length) { card.append(h("p", { class: "hint" }, "Appears once a trial is tested.")); return card; }
+  const W = 420, H = 180, L = 40, R = 24, Tp = 30, B = 30;
+  const vals = pts.map((p) => p.v).concat(target != null ? [target] : []);
+  let lo = Math.floor(Math.min(...vals) - 0.5), hi = Math.ceil(Math.max(...vals) + 0.5);
+  const X = (i) => pts.length === 1 ? (L + W - R) / 2 : L + i * (W - L - R) / (pts.length - 1);
+  const Y = (v) => Tp + (hi - v) / (hi - lo) * (H - Tp - B);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">`;
+  for (let v = lo; v <= hi; v += (hi - lo > 6 ? 2 : 1)) s += `<line class="gl" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text class="ax" x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`;
+  if (target != null) s += `<line class="tgt" x1="${L}" x2="${W - R}" y1="${Y(target)}" y2="${Y(target)}"/><text class="ax" x="${W - R}" y="${Y(target) - 5}" text-anchor="end">target ${fmt(target, 1)}</text>`;
+  const real = pts.map((p, i) => [X(i), Y(p.v), p]);
+  const solid = real.filter((r) => !r[2].pred);
+  if (solid.length > 1) s += `<polyline class="tl" points="${solid.map((r) => r[0] + "," + r[1]).join(" ")}"/>`;
+  real.forEach((r, i) => { if (r[2].pred && i > 0) s += `<line class="tl pred" x1="${real[i - 1][0]}" y1="${real[i - 1][1]}" x2="${r[0]}" y2="${r[1]}"/>`; });
+  real.forEach((r) => (s += `<circle class="${r[2].pred ? "pd" : "pt"}" cx="${r[0]}" cy="${r[1]}" r="5"/><text class="vl" x="${r[0]}" y="${r[1] - 10}" text-anchor="middle">${fmt(r[2].v, 1)}</text><text class="ax" x="${r[0]}" y="${H - 8}" text-anchor="middle">${esc(r[2].x)}${r[2].pred ? " (pred.)" : ""}</text>`));
+  card.append(h("div", { class: "chart", html: s + "</svg>" }));
+  return card;
+}
+
+/* ---------------------------------------------------------------- Bailey reference */
+function renderReference() {
+  const M = S.meta, ty = M.types;
+  const wrap = h("div", { class: "reference" });
+  wrap.append(h("div", { class: "row" }, h("h1", {}, "Bailey reference"), h("span", { class: "spacer" }), S.mix ? h("button", { class: "btn", onclick: () => { S.tab = "criteria"; render(); } }, "Back to my mix") : h("button", { class: "btn", onclick: home }, "Back to my mixes")),
+    h("p", { class: "intro" }, "Typical values for each mix type, from current Bailey Method course practice (2023). Where they differ from TRB E-C044 (2002), these are used. They load as your starting values when you pick a mix type and NMAS in Criteria. After 3 tested trials, the tool can fit the rules of thumb to your own mix."));
+  const k3 = ["sma", "cg", "fg"];
+  const rows = [
+    ["Unit weights"],
+    ["Coarse chosen unit weight", (t) => `${ty[t].uw_range[0]} to ${ty[t].uw_range[1]}% of ${ty[t].uw_ref.toUpperCase()}. Start at ${ty[t].uw_start}.`],
+    ["Fine unit weight", (t) => `100% of ${ty[t].fa_ref.toUpperCase()}`],
+    ["Bailey ranges"],
+    ["CA ratio", (t) => t === "fg" ? `New CA ${ty.fg.CA[0].toFixed(2)} to ${ty.fg.CA[1].toFixed(2)}` : "By NMAS, see below"],
+    ["FAc ratio", (t) => `${t === "fg" ? "New FAc " : ""}${ty[t].FAc[0].toFixed(2)} to ${ty[t].FAc[1].toFixed(2)}`],
+    ["FAf ratio", (t) => `${t === "fg" ? "New FAf " : ""}${ty[t].FAf[0].toFixed(2)} to ${ty[t].FAf[1].toFixed(2)}`],
+    ["Ratio where VMA is lowest (dip)", (t) => `FAc ${ty[t].rot.FAc_dip.toFixed(2)}, FAf ${ty[t].rot.FAf_dip.toFixed(2)}`],
+    ["VMA rules of thumb: change for 1% VMA"],
+    ["Coarse fraction (PCS)", (t) => `${ty[t].rot.PCS}% passing ${t === "fg" ? "original " : ""}PCS (${ty[t].rot_range.PCS[0]} to ${ty[t].rot_range.PCS[1]}). ${ty[t].pcs_dir < 0 ? "Less passing, more VMA." : "More passing, more VMA."}`],
+    ["CA ratio", (t) => `${t === "fg" ? "New CA " : ""}${ty[t].rot.CA} (${ty[t].rot_range.CA[0]} to ${ty[t].rot_range.CA[1]}). Higher CA, more VMA.`],
+    ["FAc and FAf ratios", (t) => `${ty[t].rot.FAc} each (${ty[t].rot_range.FAc[0]} to ${ty[t].rot_range.FAc[1]}). Toward the dip, less VMA.`],
+    ["Strongest lever", (t) => ty[t].lever],
+    ["Binder and checks"],
+    ["Binder to air voids", (t) => `1% more effective binder lowers air voids by about ${ty[t].rot.AC} (${ty[t].rot_range.AC[0]} to ${ty[t].rot_range.AC[1]})`],
+    ["Absorbed binder, Pba", (t) => `${ty[t].rot.pba_abs} times the combined water absorption`],
+    ["VCA check", (t) => ty[t].vca],
+    ["Gradation band", (t) => ty[t].band],
+  ];
+  wrap.append(h("div", { class: "gridwrap" }, h("table", { class: "grid ref" },
+    h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "By mix type"), k3.map((t) => h("th", {}, ty[t].label)))),
+    h("tbody", {}, rows.map((r) => r.length === 1 ? h("tr", { class: "grp" }, h("th", { colspan: 4 }, r[0])) : h("tr", {}, h("th", { class: "rowh" }, r[0]), k3.map((t) => h("td", {}, r[1](t)))))))));
+  const ns = ["37.5", "25.0", "19.0", "12.5", "9.5", "4.75"];
+  const fgc = (n) => { const c = M.fg_control[n]; return c ? `${c.slice(0, 4).map((x) => x == null ? "none" : x).join(", ")}` : "-"; };
+  wrap.append(h("div", { class: "cols2" },
+    h("section", { class: "card" }, h("h2", {}, "Control sieves by NMAS, mm"),
+      h("p", { class: "hint" }, "Half = 0.5 NMAS, PCS = 0.22 NMAS, SCS = 0.22 PCS, TCS = 0.22 SCS. NMAS is one sieve larger than the first sieve with more than 15% cumulative retained. For 12.5 mm the half sieve is 6.35 mm, interpolated between 9.5 and 4.75 mm."),
+      h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "NMAS"), h("th", {}, "Half"), h("th", {}, "PCS"), h("th", {}, "SCS"), h("th", {}, "TCS"), h("th", {}, "Fine-graded: new Half, PCS, SCS, TCS"))),
+        h("tbody", {}, ns.map((n) => { const c = M.control[n]; return h("tr", {}, h("th", { class: "rowh" }, n), c.map((x) => h("td", { class: "calc" }, x)), h("td", { class: "calc" }, fgc(n))); })))),
+    h("section", { class: "card" }, h("h2", {}, "CA ratio ranges by NMAS"),
+      h("p", { class: "hint" }, "Fine-graded mixes use the new CA ratio (0.60 to 1.00) instead."),
+      h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "NMAS"), h("th", {}, "SMA"), h("th", {}, "Dense, coarse-graded"))),
+        h("tbody", {}, ns.map((n) => { const a = M.ca_range.sma[n], b = M.ca_range.cg[n]; return h("tr", {}, h("th", { class: "rowh" }, n), h("td", { class: "calc" }, a ? `${a[0].toFixed(2)} to ${a[1].toFixed(2)}` : "not used"), h("td", { class: "calc" }, b ? `${b[0].toFixed(2)} to ${b[1].toFixed(2)}` : "-")); }))))));
+  wrap.append(h("section", { class: "card" }, h("h2", {}, "How good the rules of thumb are"),
+    h("ul", { class: "plain" }, h("li", {}, "Aim for at least 8 in 10 predictions within ±0.5% VMA of the measured value."),
+      h("li", {}, "A Gsb or Gmb change of 0.015 alone moves VMA by about 0.5%."),
+      h("li", {}, "After 3 or more tested trials, the tool can fit the factors to your own results, within the ranges above."))),
+    h("p", { class: "hint" }, "Method: Vavrik, W.R., Huber, G., Pine, W.J., Carpenter, S.H., and Bailey, R. (2002). ",
+      h("a", { href: "https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf", target: "_blank", rel: "noopener" }, "Bailey Method for Gradation Selection in HMA Mixture Design"), ". Transportation Research Circular E-C044, Transportation Research Board."));
+  return wrap;
+}
+
+/* ---------------------------------------------------------------- charts */
 S.xScale = (() => { try { return localStorage.getItem("bailey.xscale") || "even"; } catch (e) { return "even"; } })();
 function scaleToggle() {
-  return h("button", { class: "btn link toggle", title: "Switch the sieve axis", onclick: () => {
+  return h("button", { class: "btn link", title: "Switch the sieve axis", onclick: () => {
     S.xScale = S.xScale === "even" ? "p45" : "even";
     try { localStorage.setItem("bailey.xscale", S.xScale); } catch (e) { /* ignore */ }
-    renderSide();
+    if (S.refresh) S.refresh(); else render();
   } }, S.xScale === "even" ? "0.45 power axis" : "Even sieve spacing");
 }
-function gradChart({ series, nmas, cps }) {
-  const W = 580, H = 390, L = 50, R = 18, T = 34, B = 52;
-  const keys = sieves(), sv = keys.map(Number), n = sv.length;   // coarse to fine
+function chartCard(series, nmas, noTable) {
+  const cps = S.mix?.control_points || {};
+  const tg = h("button", { class: "btn link", onclick: () => { S.chartBasis = S.chartBasis === "mass" ? "volume" : "mass"; if (S.refresh) S.refresh(); else render(); } }, S.chartBasis === "mass" ? "By volume" : "By mass");
+  return h("div", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, `Gradation, by ${S.chartBasis}`), h("span", { class: "row" }, scaleToggle(), tg)),
+    chartBox(gradChart({ series, nmas, cps }), series, true), noTable ? null : gradTable(series.slice().reverse(), cps),
+    nmas && S.an?.control ? h("p", { class: "caption" }, `${nmas} mm NMAS. Control sieves ${[S.an.control.half, S.an.control.pcs, S.an.control.scs, S.an.control.tcs].filter((x) => x != null).join(", ")} mm. The shaded side is the coarse fraction.`) : null);
+}
+function gradChart({ series, nmas, cps, compact }) {
+  const W = 580, H = compact ? 300 : 390, L = 46, R = 16, T = compact ? 16 : 32, B = 46;
+  const keys = sieves(), sv = keys.map(Number), n = sv.length;
   const pw = (d) => Math.pow(d, 0.45);
   const PL = L, PR = W - R, PT = T, PB = H - B;
   let X;
   if (S.xScale === "even") {
     const step = (PR - PL) / n;
-    const xi = (i) => PR - step / 2 - i * step;                         // i counts from the coarsest sieve, so fine sits on the left
+    const xi = (i) => PR - step / 2 - i * step;
     const asc = sv.slice().reverse();
     X = (d) => {
       const iA = asc.findIndex((v) => Math.abs(v - d) < 1e-9);
@@ -1086,49 +1551,47 @@ function gradChart({ series, nmas, cps }) {
       return d < asc[0] ? xi(n - 1) : xi(0);
     };
   } else {
-    const a = pw(0.075) - 0.1, b = pw(25) + 0.1;
+    const a = pw(0.075) - 0.1, b = pw(sv[0]) + 0.1;
     X = (d) => PL + (pw(d) - a) / (b - a) * (PR - PL);
   }
   const Y = (p) => PT + (100 - p) / 100 * (PB - PT);
-  const ctl = nmas ? (ctlFor(nmas) || []) : [];
+  const C = nmas && S.an?.control && S.an.nmas === nmas ? S.an.control : null;
   let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gradation chart, percent passing by sieve size">`;
-  s += `<defs><linearGradient id="gcur" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${C_CUR}" stop-opacity=".16"/><stop offset="1" stop-color="${C_CUR}" stop-opacity="0"/></linearGradient></defs>`;
   s += `<rect class="plot" x="${PL}" y="${PT}" width="${PR - PL}" height="${PB - PT}"/>`;
-  if (nmas) {
-    const xp = X(ctl[1]);
+  if (C && !compact) {
+    const xp = X(C.coarse_pcs);
     s += `<rect class="zone" x="${xp}" y="${PT}" width="${PR - xp}" height="${PB - PT}"/>`;
-    s += `<text class="zlabel" x="${PR - 8}" y="${PB - 10}" text-anchor="end">coarse fraction</text><text class="zlabel" x="${xp - 8}" y="${PB - 10}" text-anchor="end">fine fraction</text>`;
+    s += `<text class="zlabel" x="${PR - 8}" y="${PB - 10}" text-anchor="end">coarse fraction</text>`;
   }
-  s += `<g class="grid">`;
+  s += `<g class="gridl">`;
   for (let p = 0; p <= 100; p += 10) s += `<line x1="${PL}" x2="${PR}" y1="${Y(p)}" y2="${Y(p)}"${p % 20 ? ' class="minor"' : ""}/>`;
   sv.forEach((d) => (s += `<line x1="${X(d)}" x2="${X(d)}" y1="${PT}" y2="${PB}"/>`));
   s += `</g><g class="axis">`;
-  for (let p = 0; p <= 100; p += 20) s += `<text x="${PL - 8}" y="${Y(p) + 4}" text-anchor="end">${p}</text>`;
-  const p45 = S.xScale !== "even";
+  for (let p = 0; p <= 100; p += 20) s += `<text x="${PL - 7}" y="${Y(p) + 4}" text-anchor="end">${p}</text>`;
   keys.forEach((k, i) => {
     const lb = lab(k); const x = X(sv[i]);
-    const crowd = p45 && sv[i] < 1.18 && (i % 2 === 1);
-    const y0 = PB + 16 + (crowd ? 22 : 0);
-    s += `<text class="xmm" x="${x}" y="${y0}" text-anchor="middle">${lb[0].replace(" mm", "")}</text><text class="xus" x="${x}" y="${y0 + 13}" text-anchor="middle">${esc(lb[1])}</text>`;
+    const crowd = S.xScale !== "even" && sv[i] < 1.18 && (i % 2 === 1);
+    const y0 = PB + 15 + (crowd ? 20 : 0);
+    s += `<text class="xmm" x="${x}" y="${y0}" text-anchor="middle">${lb[0].replace(" mm", "")}</text><text class="xus" x="${x}" y="${y0 + 12}" text-anchor="middle">${esc(lb[1])}</text>`;
   });
   s += `<text class="ttl" transform="translate(${PL - 32},${(PT + PB) / 2}) rotate(-90)" text-anchor="middle">% passing</text></g>`;
-  if (nmas) {
+  if (C && !compact) {
     s += `<g class="ctl">`;
-    ["Half", "PCS", "SCS", "TCS"].forEach((nm, i) => {
-      const d = ctl[i], x = X(d), w = nm.length * 7 + 10;
-      s += `<line x1="${x}" x2="${x}" y1="${PT}" y2="${PB}"/><rect x="${x - w / 2}" y="${PT - 20}" width="${w}" height="16" rx="3"/><text x="${x}" y="${PT - 8}" text-anchor="middle">${nm}</text>`;
+    [["Half", C.half], ["PCS", C.pcs], ["SCS", C.scs], ["TCS", C.tcs]].forEach(([nm, d]) => {
+      if (d == null || d < sv[n - 1] - 1e-9 || d > sv[0] + 1e-9) return;
+      const x = X(d), w = nm.length * 7 + 10;
+      s += `<line x1="${x}" x2="${x}" y1="${PT}" y2="${PB}"/><rect x="${x - w / 2}" y="${PT - 19}" width="${w}" height="15" rx="3"/><text x="${x}" y="${PT - 8}" text-anchor="middle">${nm}</text>`;
     });
     s += `</g>`;
-    const idx = sv.indexOf(nmas); const dmax = idx > 0 ? sv[idx - 1] : sv[0];
+    const idx = sv.findIndex((v) => Math.abs(v - nmas) < 1e-9); const dmax = idx > 0 ? sv[idx - 1] : sv[0];
     const pts = [];
-    sv.slice().reverse().filter((d) => d <= dmax).forEach((d, i, arr) => {
-      if (i > 0) { const d0 = arr[i - 1]; for (let k = 1; k < 6; k++) { const dd = Math.pow(pw(d0) + (pw(d) - pw(d0)) * k / 6, 1 / 0.45); pts.push(`${X(dd)},${Y(100 * Math.pow(dd / dmax, 0.45))}`); } }
-      pts.push(`${X(d)},${Y(100 * Math.pow(d / dmax, 0.45))}`);
+    sv.slice().reverse().filter((d) => d <= dmax + 1e-9).forEach((d, i, arr) => {
+      if (i > 0) { const d0 = arr[i - 1]; for (let k = 1; k < 6; k++) { const dd = Math.pow(pw(d0) + (pw(d) - pw(d0)) * k / 6, 1 / 0.45); pts.push(`${X(dd).toFixed(1)},${Y(100 * Math.pow(dd / dmax, 0.45)).toFixed(1)}`); } }
+      pts.push(`${X(d).toFixed(1)},${Y(100 * Math.pow(d / dmax, 0.45)).toFixed(1)}`);
     });
     s += `<polyline class="mdl" points="${pts.join(" ")}"/>`;
   }
-  // control points: band where both limits exist on neighbouring sieves, ticks everywhere
-  const cp = keys.map((k) => { const v = (cps || {})[k] || {}; return { k, d: +k, lo: num(v.min), hi: num(v.max) }; });
+  const cp = keys.map((k) => { const v = (cps || {})[k] || {}; return { k, d: +k, lo: num(v.min), hi: num(v.max), slo: num(v.soft_min), shi: num(v.soft_max) }; });
   for (let i = 0; i < cp.length - 1; i++) {
     const a = cp[i], b = cp[i + 1];
     if (a.lo != null && a.hi != null && b.lo != null && b.hi != null)
@@ -1137,96 +1600,59 @@ function gradChart({ series, nmas, cps }) {
   cp.forEach((c) => {
     const x = X(c.d);
     if (c.lo != null && c.hi != null) s += `<line class="cp" x1="${x}" x2="${x}" y1="${Y(c.hi)}" y2="${Y(c.lo)}"/>`;
-    if (c.lo != null) s += `<line class="cp" x1="${x - 7}" x2="${x + 7}" y1="${Y(c.lo)}" y2="${Y(c.lo)}"/>`;
-    if (c.hi != null) s += `<line class="cp" x1="${x - 7}" x2="${x + 7}" y1="${Y(c.hi)}" y2="${Y(c.hi)}"/>`;
-  });
-  // soft targets: a dashed bracket beside the sieve line
-  keys.forEach((k) => {
-    const v = (cps || {})[k] || {}, lo = num(v.soft_min), hi = num(v.soft_max);
-    if (lo == null && hi == null) return;
-    const x = X(+k) + 9, y1 = Y(hi ?? 100), y2 = Y(lo ?? 0);
-    s += `<g class="softpt"><rect x="${x - 4}" y="${y1}" width="8" height="${Math.max(1, y2 - y1)}"/>`;
-    if (hi != null) s += `<line x1="${x - 5}" x2="${x + 5}" y1="${y1}" y2="${y1}"/>`;
-    if (lo != null) s += `<line x1="${x - 5}" x2="${x + 5}" y1="${y2}" y2="${y2}"/>`;
-    s += `<title>Soft target ${lab(k)[0]} (${esc(lab(k)[1])}): ${lo ?? "..."} to ${hi ?? "..."}%</title></g>`;
+    if (c.lo != null) s += `<line class="cp" x1="${x - 6}" x2="${x + 6}" y1="${Y(c.lo)}" y2="${Y(c.lo)}"/>`;
+    if (c.hi != null) s += `<line class="cp" x1="${x - 6}" x2="${x + 6}" y1="${Y(c.hi)}" y2="${Y(c.hi)}"/>`;
+    if (c.slo != null || c.shi != null) {
+      const xs = x + 9, y1 = Y(c.shi ?? 100), y2 = Y(c.slo ?? 0);
+      s += `<g class="softpt"><rect x="${xs - 4}" y="${y1}" width="8" height="${Math.max(1, y2 - y1)}"/><title>Soft target ${esc(lab(c.k)[0])}: ${c.slo ?? "..."} to ${c.shi ?? "..."}%</title></g>`;
+    }
   });
   series.forEach((ser) => {
-    const pts = keys.map((k) => { const v = num(ser.grad?.[k]); return v == null ? null : [X(+k), Y(v), k, v]; }).filter(Boolean);
+    const pts = keys.map((k) => { const v = num(ser.grad?.[k] ?? ser.grad?.[+k]); return v == null ? null : [X(+k), Y(v), k, v]; }).filter(Boolean);
     if (pts.length < 2) return;
-    const line = pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
-    s += `<polyline class="series ${ser.cls || ""}" style="stroke:${ser.color}" points="${line}"/>`;
-    if (ser.cls !== "old") pts.forEach((p) => (s += `<circle class="dot ${ser.cls || ""}" cx="${p[0]}" cy="${p[1]}" r="${ser.cls === "pile" ? 2.8 : 3.6}" style="fill:${ser.color}"><title>${esc(ser.name)}: ${lab(p[2])[0]} (${esc(lab(p[2])[1])}) ${fmt(p[3], 1)}%</title></circle>`));
+    s += `<polyline class="series ${ser.cls || ""}" style="stroke:${ser.color}" points="${pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ")}"/>`;
+    if (ser.cls !== "old") pts.forEach((p) => (s += `<circle class="dot" cx="${p[0]}" cy="${p[1]}" r="${ser.cls === "pile" ? 2.6 : 3.3}" style="fill:${ser.color}"><title>${esc(ser.name)}: ${lab(p[2])[0]} (${esc(lab(p[2])[1])}) ${fmt(p[3], 1)}%</title></circle>`));
   });
   return s + `</svg>`;
 }
-
-function rangeDist(x, r) {
-  if (x == null || !r) return 0;
-  const lo = num(r[0]), hi = num(r[1]);
-  if (lo != null && x < lo) return lo - x;
-  if (hi != null && x > hi) return x - hi;
-  return 0;
-}
-/* how a value moved relative to its range: better, worse or same */
-function moveClass(v, pv, r, scale) {
-  if (v == null || pv == null) return "";
-  const a = rangeDist(v, r), b = rangeDist(pv, r);
-  if (b < a - scale * 0.02) return "better";
-  if (b > a + scale * 0.02) return "worse";
-  return "same";
-}
-function gauges(a, p) {
-  const rng = S.mix.bailey_ranges || S.an?.default_ranges || {};
-  const rows = [["ca_ruw", "% CA RUW", a.bailey?.cuw_pct, p?.bailey?.cuw_pct, [90, 135], 1, 10], ["CA", "CA ratio", a.ratios.CA, p?.ratios.CA, [0, 1], 3, 0.1],
-    ["FAc", "FAc ratio", a.ratios.FAc, p?.ratios.FAc, [0.3, 1.1], 3, 0.1], ["FAf", "FAf ratio", a.ratios.FAf, p?.ratios.FAf, [0.3, 1.1], 3, 0.1]];
-  const out = h("div", { class: p ? "gauges moving" : "gauges" }, rows.map(([k, t, v, pv, dom, d, sc]) => {
-    const tg = num(S.mix.bailey_targets?.[k]?.target);
-    const tol = k === "ca_ruw" ? 1 : 0.01;
-    const r = tg != null ? [tg - tol, tg + tol] : (rng[k] || []);
-    const lo = Math.min(dom[0], ...[v, pv, r[0]].filter((x) => x != null)), hi = Math.max(dom[1], ...[v, pv, r[1]].filter((x) => x != null));
-    const frac = (x) => 100 * (x - lo) / (hi - lo);
-    const pos = (x) => `${frac(x).toFixed(1)}%`;
-    const track = h("div", { class: "track" });
-    if (num(r[0]) != null || num(r[1]) != null) { const a0 = num(r[0]) ?? lo, a1 = num(r[1]) ?? hi; track.append(h("span", { class: "ok", style: `left:${pos(a0)};width:calc(${pos(a1)} - ${pos(a0)})`, title: `Range ${a0} to ${a1}` })); }
-    const mc = moveClass(v, pv, r, sc);
-    const moved = pv != null && v != null && Math.abs(pv - v) >= Math.pow(10, -d);
-    if (moved) {
-      const x0 = frac(Math.min(v, pv)), x1 = frac(Math.max(v, pv));
-      track.append(h("span", { class: `arw ${pv > v ? "right" : "left"} ${mc}`, style: `left:${x0.toFixed(1)}%;width:${(x1 - x0).toFixed(1)}%`, title: `${fmt(v, d)} to ${fmt(pv, d)}` }));
-    }
-    if (tg != null) track.append(h("span", { class: "tgt", style: `left:${pos(tg)}`, title: `Target ${fmt(tg, d)}` }));
-    if (v != null) track.append(h("span", { class: "mk", style: `left:calc(${pos(v)} - 1px)`, title: `Start ${fmt(v, d)}` }));
-    if (pv != null) track.append(h("span", { class: "mk prop", style: `left:calc(${pos(pv)} - 1px)`, title: `Proposed ${fmt(pv, d)}` }));
-    const val = p
-      ? h("div", { class: "gval" }, h("b", {}, `${fmt(v, d)} \u2192 ${fmt(pv, d)}`),
-          h("small", { class: mc }, moved ? `${sgn(pv - v, d)}${mc === "better" ? ", toward range" : mc === "worse" ? ", away from range" : ""}` : "no change"))
-      : h("div", { class: "gval" }, h("b", {}, fmt(v, d)));
-    return h("div", { class: "gauge" }, h("span", {}, t), track, val);
-  }));
-  return out;
-}
-
-function historyChart(done) {
-  const W = 560, H = 200, L = 40, R = 14, T = 16, B = 30;
-  const tg = S.mix.targets || {};
-  const vals = done.flatMap((a) => [a.volumetrics.vma, a.volumetrics.va]).concat([num(tg.vma), num(tg.va)].filter((x) => x != null));
-  const lo = Math.floor(Math.min(...vals) - 1), hi = Math.ceil(Math.max(...vals) + 1);
-  const n = done.length;
-  const PX = 34; const X = (i) => L + (n === 1 ? (W - L - R) / 2 : PX + i * (W - L - R - 2 * PX) / (n - 1));
-  const Y = (v) => T + (hi - v) / (hi - lo) * (H - T - B);
-  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="VMA and air voids for each tested trial"><g class="grid">`;
-  for (let v = lo; v <= hi; v += (hi - lo > 12 ? 2 : 1)) s += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text class="axis" x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`;
-  s += `</g>`;
-  [["vma", "var(--amber)"], ["va", "var(--teal)"]].forEach(([k, c]) => {
-    if (num(tg[k]) != null) s += `<line x1="${L}" x2="${W - R}" y1="${Y(tg[k])}" y2="${Y(tg[k])}" style="stroke:${c};stroke-dasharray:5 4;stroke-width:1.2"/>`;
-    s += `<polyline class="series" style="stroke:${c};stroke-width:2.4" points="${done.map((a, i) => `${X(i)},${Y(a.volumetrics[k])}`).join(" ")}"/>`;
-    done.forEach((a, i) => (s += `<circle class="dot" cx="${X(i)}" cy="${Y(a.volumetrics[k])}" r="4" style="fill:${c}"/>`));
-  });
-  done.forEach((a, i) => (s += `<text class="axis" x="${X(i)}" y="${H - 10}" text-anchor="middle">${esc(trialById(a.id)?.label || a.id)}</text>`));
-  s += `</svg>`;
-  const box = h("div", { class: "chart", html: s });
-  box.append(h("div", { class: "legend" }, h("span", { style: "color:var(--amber)" }, h("i"), h("span", { style: "color:var(--graphite)" }, "VMA, %")), h("span", { style: "color:var(--teal)" }, h("i"), h("span", { style: "color:var(--graphite)" }, "Air voids, %")), h("span", { class: "dash", style: "color:var(--graphite)" }, h("i"), "targets")));
+function chartBox(svg, series, legend) {
+  const box = h("div", { class: "chart", html: svg });
+  const hasCp = Object.values(S.mix?.control_points || {}).some((v) => v && (num(v.min) != null || num(v.max) != null));
+  const hasSoft = Object.values(S.mix?.control_points || {}).some((v) => v && (num(v.soft_min) != null || num(v.soft_max) != null));
+  const items = legend ? series.filter((s) => s.cls !== "old").concat(series.filter((s) => s.cls === "old").slice(-3)) : series;
+  box.append(h("div", { class: "legend" }, items.map((s) => h("span", { class: s.cls === "prop" ? "dash" : "" }, h("i", { style: `color:${s.color}` }), s.name)),
+    legend && S.an?.nmas ? h("span", { class: "dash" }, h("i", { style: "color:#6B7780" }), "max density") : null,
+    legend && hasCp ? h("span", { class: "bandkey" }, h("i"), "control points") : null,
+    legend && hasSoft ? h("span", { class: "softkey" }, h("i"), "soft targets") : null));
   return box;
+}
+function gradTable(series, cps) {
+  const keys = sieves();
+  const lim = (k) => { const v = (cps || {})[k] || {}; return { lo: num(v.min), hi: num(v.max), slo: num(v.soft_min), shi: num(v.soft_max) }; };
+  const rng = (a, b) => (a == null && b == null ? "" : `${a ?? ""}-${b ?? ""}`);
+  const hasCp = cps && keys.some((k) => lim(k).lo != null || lim(k).hi != null);
+  const hasSoft = cps && keys.some((k) => lim(k).slo != null || lim(k).shi != null);
+  const rows = series.filter((r) => r.grad).map((r) => h("tr", { class: "gv-" + (r.cls || "") },
+    h("th", { class: "rowh" }, h("i", { class: "sw", style: `background:${r.color}` }), r.name),
+    keys.map((k) => {
+      const v = num(r.grad[k] ?? r.grad[+k]); if (v == null) return h("td", {}, "");
+      const L = lim(k); let c = "";
+      if (cps && r.cls !== "pile") {
+        if ((L.lo != null && v < L.lo - 1e-9) || (L.hi != null && v > L.hi + 1e-9)) c = "out";
+        else if ((L.slo != null && v < L.slo - 1e-9) || (L.shi != null && v > L.shi + 1e-9)) c = "softout";
+      }
+      return h("td", { class: c, style: r.cls === "old" ? "" : `color:${r.color}` }, fmt(v, 1));
+    })));
+  if (hasCp) rows.push(h("tr", { class: "gv-lim" }, h("th", { class: "rowh" }, "Control"), keys.map((k) => h("td", {}, rng(lim(k).lo, lim(k).hi)))));
+  if (hasSoft) rows.push(h("tr", { class: "gv-lim soft" }, h("th", { class: "rowh" }, "Soft"), keys.map((k) => h("td", {}, rng(lim(k).slo, lim(k).shi)))));
+  if (!rows.length) return document.createTextNode("");
+  const id = "gv-" + Math.random().toString(36).slice(2, 7);
+  return h("div", { class: "gvals" },
+    h("div", { class: "gridwrap" }, h("table", { class: "gv", id },
+      h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "% passing"), keys.map((k) => h("th", {}, lab(k)[0].replace(" mm", ""), h("small", {}, lab(k)[1]))))),
+      h("tbody", {}, rows))),
+    h("div", { class: "row" }, h("button", { class: "btn link", onclick: () => copyGrid("#" + id) }, "Copy values for Excel"),
+      cps ? h("span", { class: "hint" }, "Red: outside a control point. Wavy underline: outside a soft target.") : null));
 }
 
 window.addEventListener("beforeunload", () => { if (S.mix && window.BDT_API) { window.BDT_API("/api/save", { file: S.file, mix: S.mix }); return; } if (S.mix) navigator.sendBeacon && navigator.sendBeacon("/api/save", new Blob([JSON.stringify({ file: S.file, mix: S.mix })], { type: "application/json" })); });

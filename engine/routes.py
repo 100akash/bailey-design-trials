@@ -10,8 +10,12 @@ def meta():
     return {"sieves": [str(s) for s in B.SIEVES],
             "labels": {str(s): list(v) for s, v in B.SIEVE_LABELS.items()},
             "slots": B.SLOTS, "kind": B.KIND, "rot": B.DEFAULT_ROT,
+            "types": B.TYPE_INFO,
+            "ca_range": {t: {str(k): list(v) for k, v in r.items()} for t, r in B.CA_RANGE.items()},
             "sma_ca_range": {str(k): list(v) for k, v in B.SMA_CA_RANGE.items()},
-            "control": {str(k): list(v) for k, v in B.CONTROL.items()}}
+            "control": {str(k): list(v) for k, v in B.CONTROL.items()},
+            "fg_control": {str(k): list(v) for k, v in B.FG_CONTROL.items()},
+            "bands": {t: {str(n): {str(s): list(l) for s, l in rows.items()} for n, rows in b.items()} for t, b in B.SPEC_BANDS.items()}}
 
 
 def analyze(b):
@@ -29,8 +33,10 @@ def forward(b):
     mix = b["mix"]
     nmas = B.num(b.get("nmas")) or B.design_nmas(mix) or 12.5
     conv = B.detect_conv(mix["materials"], mix.get("settings", {}).get("units", "auto"))
+    mt = B.mix_type(mix, nmas)
     r = B.forward_blend(mix["materials"], float(b["cuw"]), b["ca_vol"], b["fa_vol"], float(b["dust"]),
-                        f2_pct=float(b.get("f2") or 0), conv=conv, pcs=B.CONTROL[nmas][1])
+                        f2_pct=float(b.get("f2") or 0), conv=conv, pcs=B.CONTROL[nmas][1],
+                        mix="sma" if mt == "sma" else "dense")
     a = B.analyze_blend(mix, r["pct"], nmas)
     a["status"] = B.range_status(mix, a, nmas)
     return {"blend": r, "analysis": a}
@@ -46,7 +52,7 @@ def predict(b):
     ref["_id"] = ref_t.get("id")
     new = B.analyze_blend(mix, b["pct"], nmas)
     new["status"] = B.range_status(mix, new, nmas)
-    return {"prediction": B.predict(mix, ref, new, mix.get("rot"), mix.get("targets")), "analysis": new}
+    return {"prediction": B.predict(mix, ref, new, None, mix.get("targets")), "analysis": new}
 
 
 def suggest(b):
@@ -57,8 +63,16 @@ def suggest(b):
     return B.suggest(mix, ref, base, b.get("locks") or {}, nmas)
 
 
+def accuracy(b):
+    return B.accuracy(b["mix"], b.get("mode") or "previous")
+
+
+def fit(b):
+    return B.fit_rot(b["mix"])
+
+
 POST = {"/api/analyze": analyze, "/api/preview": preview, "/api/forward": forward,
-        "/api/predict": predict, "/api/suggest": suggest}
+        "/api/predict": predict, "/api/suggest": suggest, "/api/accuracy": accuracy, "/api/fit": fit}
 
 
 def _clean(o):

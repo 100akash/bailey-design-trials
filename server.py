@@ -46,7 +46,7 @@ def list_mixes():
             with open(p, encoding="utf-8") as fh:
                 m = json.load(fh)
             trials = m.get("trials") or []
-            done = [t for t in trials if (t.get("results") or {}).get("pb")]
+            done = [t for t in trials if (lambda r: r.get("pb") and any(r.get("gmb") or []) and any(r.get("gmm") or []))(t.get("results") or {})]
             out.append({"file": f, "name": m.get("name") or f[:-5], "modified": os.path.getmtime(p),
                         "trials": len(trials), "tested": len(done),
                         "materials": sum(1 for s in B.SLOTS if (m.get("materials") or {}).get(s, {}).get("name"))})

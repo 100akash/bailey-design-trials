@@ -50,7 +50,7 @@
         const m = JSON.parse(store.get(k));
         const trials = m.trials || [];
         out.push({ file: f, name: m.name || f.replace(/\.json$/, ""), modified: (m._saved || 0) / 1000, trials: trials.length,
-          tested: trials.filter((t) => (t.results || {}).pb).length,
+          tested: trials.filter((t) => { const r = t.results || {}; return r.pb && (r.gmb || []).some((x) => x) && (r.gmm || []).some((x) => x); }).length,
           materials: Object.values(m.materials || {}).filter((x) => x && (x.name || "").trim()).length });
       } catch (e) { out.push({ file: f, name: f, error: String(e) }); }
     });

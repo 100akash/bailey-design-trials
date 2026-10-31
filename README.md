@@ -1,6 +1,6 @@
 # Bailey Design Trials
 
-A tool for designing Stone Matrix Asphalt (SMA) aggregate blends with the Bailey Method.
+A tool for designing asphalt mix trials with the Bailey Method: SMA and dense-graded mixes.
 Enter your stockpiles and log each lab trial.
 The tool proposes the next blend to try and the binder content for your air-void target.
 
@@ -11,40 +11,27 @@ Use **Download mix file** to keep a copy or share a mix, and **Open a mix file**
 
 ## How it works
 
-1. **Mix setup.** Name the mix and enter your targets: VMA and air voids, plus optional VFA, minimum binder and VCA dry-rodded.
-   Add gradation control points (hard limits) and soft targets on any sieve (for example 22 to 24% passing #8).
-   Set the practical limits: the smallest % a stockpile can be fed at (default 5%, fillers exempt) and whether to prefer one fine aggregate.
-   Typical SMA Bailey ranges are pre-filled. Edit or clear them for your mix.
-2. **Materials.** Up to 3 coarse aggregates, 3 fine aggregates and 2 fillers.
-   Enter washed gradations (% passing), Gsb, absorption, and loose and rodded unit weights (LUW and RUW).
-   Units are detected from the unit weights. You can paste gradations straight from Excel.
-3. **Trials.** Each column is one trial. Enter the blend (% by mass of aggregate) and the lab results: Pb, two Gmb and two Gmm.
-   The tool computes VMA, Va, VFA, Pba, Pbe and VCAmix.
-   It also works backwards from the blend to its Bailey values: % CA RUW, CA volume, % passing PCS, and the CA, FAc and FAf ratios.
-4. **Next trial.** Pick a tested trial to start from and fix any stockpile you want held constant. The tool returns four options:
-   - **Recommended:** the smallest change to the unlocked stockpiles that reaches your VMA target.
-   - **Coarse volume first:** only the coarse aggregate volume changes.
-   - **Fines and filler first:** the coarse aggregate stays the same.
-   - **Bailey targets first:** every Bailey range or target is a hard limit, then VMA gets as close as it can.
+The tool has four steps, in tabs across the top.
 
-   Each option shows predicted VMA, the recommended Pb for your air-void target, and how each Bailey value moves.
-   Edit any % and the prediction updates. Save a blend as the next trial and compare predicted with measured results later.
+1. **Stockpiles.** Up to 3 coarse, 3 fine and 2 filler stockpiles. Enter washed gradations (% passing, 50 mm down to 0.075 mm), Gsb, absorption, and loose and rodded unit weights. Paste straight from Excel.
+2. **Criteria.** Pick the mix type (SMA, dense coarse-graded or dense fine-graded) and the NMAS (4.75 to 37.5 mm). The typical Bailey values for that type load automatically: control sieves, unit weight ranges, Bailey ratio ranges, FA dips and the VMA rules of thumb. Then set the VMA and air-void targets, gradation control points and soft targets (or load the AASHTO M 325 or ASTM D3515 band), and practical limits such as a 5% minimum stockpile.
+3. **Trials.** The design loop. Each trial has three parts:
+   - **Blend and binder.** Generate Trial 1 from Bailey inputs (coarse unit weight, volume splits, #200 target), or enter a blend. For later trials the tool suggests blends from a tested trial: Recommended, Coarse volume first, Fines and filler first, Bailey targets first, or Binder only. Change any stockpile or the binder and the predicted VMA, air voids, Bailey values and gradation update live. A balance pile keeps the total at 100.
+   - **Lab data.** Batch masses for each specimen, the specimen mass for your target height, gyrations, Gmb from AASHTO T 166 masses and Gmm from AASHTO T 209 readings, or just the final values.
+   - **Results.** VMA, air voids, VFA and VCAmix against your targets, how the prediction did, Bailey values against your ranges, and the next step.
+4. **Compare.** All trials side by side, VMA and air voids across trials, and prediction accuracy. After 3 tested trials the tool can fit the rules of thumb to your own mix, inside the typical range for the mix type.
 
-The gradation chart is always on screen. It shows the maximum density line, the Bailey control sieves, your control points and soft targets, and every trial.
-A table under the chart lists the values in the same colours.
+A **Bailey reference** page lists the typical values for every mix type.
 
 ## The method in brief
 
 - NMAS is one sieve larger than the first sieve with more than 15% cumulative retained.
-- Control sieves: Half = 0.5 × NMAS, PCS = 0.22 × NMAS, SCS = 0.22 × PCS, TCS = 0.22 × SCS.
-- For SMA the coarse aggregate chosen unit weight is a % of its rodded unit weight. The fine aggregate fills the coarse voids at its loose unit weight.
-- Predicted VMA = VMA of the start trial plus terms for the change in % passing PCS and in the CA, FAc and FAf ratios.
-  The default factors are 2% passing PCS, 0.20 CA ratio, and 0.10 FAc or FAf per 1% VMA.
-  FAc and FAf act around a minimum ("dip") near 0.65 and 0.70. All factors can be edited per mix.
+- Control sieves: Half = 0.5 × NMAS, PCS = 0.22 × NMAS, SCS = 0.22 × PCS, TCS = 0.22 × SCS. Fine-graded mixes also use the new control sieves on the fine fraction.
+- The coarse chosen unit weight is a % of RUW for SMA and of LUW for dense mixes. The fine aggregate fills the coarse voids at LUW (SMA) or RUW (dense).
+- Predicted VMA = VMA of a tested trial plus terms for the change in % passing PCS and in the CA, FAc and FAf ratios, with the factors for the mix type.
 - Change in air voids = change in VMA + change in effective binder × 2.25.
 
-The search treats control points, minimum Pb and VCA dry-rodded as hard limits.
-Bailey ranges and sieve soft targets are soft goals.
+Typical values follow current Bailey Method course practice (2023), which takes priority over E-C044 where they differ.
 
 **Predictions use rules of thumb and are estimates only. Confirm every trial in the lab.**
 
@@ -79,7 +66,7 @@ https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf
 
 This tool is not endorsed by the FAA or by any Bailey Method course.
 
-Fonts: Barlow and Barlow Condensed, SIL Open Font License (`web/fonts/OFL-Barlow.txt`).
+Fonts: IBM Plex Sans and Overpass from Google Fonts.
 
 ## License
 
