@@ -363,3 +363,5 @@ table.compact td input[type=text] { width: 66px; }
 .trialhead input.tname { width: auto; }
 .head .row { justify-content: flex-end; }
 .below { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+table.grid.narrow { width: auto; min-width: 280px; }
+table.ref thead th.rowh { color: #FFF; }

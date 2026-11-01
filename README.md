@@ -13,11 +13,11 @@ Use **Download mix file** to keep a copy or share a mix, and **Open a mix file**
 
 The tool has four steps, in tabs across the top.
 
-1. **Stockpiles.** Up to 3 coarse, 3 fine and 2 filler stockpiles. Enter washed gradations (% passing, 50 mm down to 0.075 mm), Gsb, absorption, and loose and rodded unit weights. Paste straight from Excel.
+1. **Stockpiles.** Up to 3 coarse, 3 fine and 2 filler stockpiles. Enter washed gradations (% passing, 50 mm down to 0.075 mm), Gsb, absorption, and loose and rodded unit weights (both are needed for every coarse and fine stockpile). Paste straight from Excel.
 2. **Criteria.** Pick the mix type (SMA, dense coarse-graded or dense fine-graded) and the NMAS (4.75 to 37.5 mm). The typical Bailey values for that type load automatically: control sieves, unit weight ranges, Bailey ratio ranges, FA dips and the VMA rules of thumb. Then set the VMA and air-void targets, gradation control points and soft targets (or load the AASHTO M 325 or ASTM D3515 band), and practical limits such as a 5% minimum stockpile.
 3. **Trials.** The design loop. Each trial has three parts:
    - **Blend and binder.** Generate Trial 1 from Bailey inputs (coarse unit weight, volume splits, #200 target), or enter a blend. For later trials the tool suggests blends from a tested trial: Recommended, Coarse volume first, Fines and filler first, Bailey targets first, or Binder only. Change any stockpile or the binder and the predicted VMA, air voids, Bailey values and gradation update live. A balance pile keeps the total at 100.
-   - **Lab data.** Batch masses for each specimen, the specimen mass for your target height, gyrations, Gmb from AASHTO T 166 masses and Gmm from AASHTO T 209 readings, or just the final values.
+   - **Lab results.** Binder content, Gmb, height and mass for each specimen, Gmm, gyrations, compaction temperature and VCA dry-rodded.
    - **Results.** VMA, air voids, VFA and VCAmix against your targets, how the prediction did, Bailey values against your ranges, and the next step.
 4. **Compare.** All trials side by side, VMA and air voids across trials, and prediction accuracy. After 3 tested trials the tool can fit the rules of thumb to your own mix, inside the typical range for the mix type.
 
@@ -31,7 +31,7 @@ A **Bailey reference** page lists the typical values for every mix type.
 - Predicted VMA = VMA of a tested trial plus terms for the change in % passing PCS and in the CA, FAc and FAf ratios, with the factors for the mix type.
 - Change in air voids = change in VMA + change in effective binder × 2.25.
 
-Typical values follow current Bailey Method course practice (2023), which takes priority over E-C044 where they differ.
+Typical values come from W.J. Pine's course *The Bailey Method: Achieving Volumetrics and HMA Compactability* (2023 class), which takes priority over E-C044 where they differ.
 
 **Predictions use rules of thumb and are estimates only. Confirm every trial in the lab.**
 
@@ -60,9 +60,10 @@ It needs Python 3.8 or newer and nothing else.
 
 Developed by Akash Bajaj, Illinois Center for Transportation, University of Illinois Urbana-Champaign.
 
-Method reference: Vavrik, W. R., Huber, G., Pine, W. J., Carpenter, S. H., and Bailey, R. (2002).
-*Bailey Method for Gradation Selection in HMA Mixture Design.* Transportation Research Circular E-C044, Transportation Research Board.
-https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf
+References:
+
+- Pine, W.J. *The Bailey Method: Achieving Volumetrics and HMA Compactability.* Course manual, 2023 class. Source of the typical values.
+- Vavrik, W.R., Huber, G., Pine, W.J., Carpenter, S.H., and Bailey, R. (2002). *Bailey Method for Gradation Selection in HMA Mixture Design.* Transportation Research Circular E-C044, Transportation Research Board. https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf
 
 This tool is not endorsed by the FAA or by any Bailey Method course.
 
