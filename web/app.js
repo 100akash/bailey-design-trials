@@ -160,9 +160,48 @@ function stockMissing() {
 }
 const VMA_MIN = { sma: { all: 17.0, src: "AASHTO M 325" }, dense: { 37.5: 11, 25: 12, 19: 13, 12.5: 14, 9.5: 15, 4.75: 16, src: "AASHTO M 323" } };
 function typicalVMA() {
+  const fs = faaSpec();
+  if (fs) return [fs.G.vma, `${fs.label}, minimum`];
   const n = S.an?.nmas ?? num(S.mix.settings.nmas_override);
   if (mixType() === "sma") return [VMA_MIN.sma.all, VMA_MIN.sma.src];
   return n && VMA_MIN.dense[n] ? [VMA_MIN.dense[n], VMA_MIN.dense.src] : null;
+}
+
+/* ---------------------------------------------------------------- FAA AC 150/5370-10H */
+const FAA_SRC = "FAA AC 150/5370-10H (2018)";
+const FAA_URL = "https://www.faa.gov/airports/resources/advisory_circulars/index.cfm/go/document.current/documentnumber/150_5370-10";
+const FAA_G = {
+  "1": { label: "Gradation 1", size: "1 in", nmas: 19, vma: 14.0, pb: [4.5, 7.0], slag: [5.0, 7.5], lift: "3 in",
+    band: { "25.0": [100, 100], "19.0": [90, 100], "12.5": [68, 88], "9.5": [60, 82], "4.75": [45, 67], "2.36": [32, 54], "1.18": [22, 44], "0.600": [15, 35], "0.300": [9, 25], "0.150": [6, 18], "0.075": [3, 6] } },
+  "2": { label: "Gradation 2", size: "3/4 in", nmas: 12.5, vma: 15.0, pb: [5.0, 7.5], slag: [6.5, 9.5], lift: "2 in",
+    band: { "19.0": [100, 100], "12.5": [90, 100], "9.5": [72, 88], "4.75": [53, 73], "2.36": [38, 60], "1.18": [26, 48], "0.600": [18, 38], "0.300": [11, 27], "0.150": [6, 18], "0.075": [3, 6] } },
+  "3": { label: "Gradation 3", size: "1/2 in", nmas: 9.5, vma: 16.0, pb: [5.5, 8.0], slag: [7.0, 10.5], lift: "1 1/2 in", note: "Leveling courses only, unless the FAA approves other use.",
+    band: { "12.5": [100, 100], "9.5": [90, 100], "4.75": [58, 78], "2.36": [40, 60], "1.18": [28, 48], "0.600": [18, 38], "0.300": [11, 27], "0.150": [6, 18], "0.075": [3, 6] } },
+};
+const FAA_ITEMS = {
+  "P-401": { name: "P-401 Asphalt Mix Pavement", va: 3.5, comp: "75 blows or gyrations (50 allowed for aircraft of 60,000 lb or less)", nd: 75,
+    grads: { "1": FAA_G["1"], "2": FAA_G["2"], "3": FAA_G["3"] } },
+  "P-403": { name: "P-403 Asphalt Mix Pavement, base, leveling or surface course", va: 3.5, comp: "75 blows or gyrations, as specified", nd: 75,
+    grads: { "1": FAA_G["1"], "2": FAA_G["2"], "3": FAA_G["3"] } },
+  "P-404": { name: "P-404 Fuel-Resistant Asphalt Mix Pavement", va: 2.5, vaTol: 0.2, comp: "50 blows, Marshall design only", nd: 50,
+    note: "Table 1 of P-404 lists a 14% minimum VMA. The tool uses the stricter value in Table 2 for each gradation.",
+    grads: { "2": { ...FAA_G["2"], label: "3/4 in mix", lift: "2 in" }, "3": { ...FAA_G["3"], label: "1/2 in mix", note: "" } } },
+};
+function faaAutoGrad(item) {
+  const n = S.an?.nmas ?? num(S.mix.settings.nmas_override);
+  const gs = Object.keys(FAA_ITEMS[item].grads);
+  if (n == null) return gs[0];
+  const hit = gs.find((g) => Math.abs(FAA_G[g].nmas - n) < 1e-6);
+  if (hit) return hit;
+  return n > 19 ? gs[0] : gs[gs.length - 1];
+}
+function faaSpec() {
+  const sp = S.mix?.spec;
+  if (!sp?.faa || !FAA_ITEMS[sp.item]) return null;
+  const it = FAA_ITEMS[sp.item];
+  const g = sp.grad && sp.grad !== "auto" && it.grads[sp.grad] ? sp.grad : faaAutoGrad(sp.item);
+  const G = it.grads[g];
+  return { item: sp.item, it, g, G, auto: !sp.grad || sp.grad === "auto", pb: sp.slag ? G.slag : G.pb, slag: !!sp.slag, label: `${sp.item} ${G.label}` };
 }
 /* number input used everywhere */
 function numInput(path, opts = {}) {
@@ -762,6 +801,7 @@ function renderCriteria(page) {
     h("label", { class: "f", style: "margin-top:12px" }, h("span", {}, "Notes"),
       (() => { const t = h("textarea", { rows: 2 }); t.value = m.notes || ""; t.addEventListener("input", () => edit(["notes"], t.value)); return t; })())));
 
+  page.append(faaCard());
   const left = h("div", { class: "col" }), right = h("div", { class: "col" });
   page.append(h("div", { class: "cols2" }, left, right));
 
@@ -865,6 +905,53 @@ function renderCriteria(page) {
     const pv = $("#cp-preview"); pv.innerHTML = "";
     pv.append(h("div", { class: "chart small", html: gradChart({ series: [], nmas: S.an?.nmas, cps: m.control_points, compact: true }) }));
   };
+}
+function applyFaa(quiet) {
+  const fs = faaSpec(); if (!fs) return;
+  const m = S.mix;
+  allSieves().forEach((k) => { const c = m.control_points[k]; if (c) { delete c.min; delete c.max; } });
+  Object.entries(fs.G.band).forEach(([s, [lo, hi]]) => { const k = allSieves().find((x) => Math.abs(+x - +s) < 1e-9); if (!k) return; m.control_points[k] = { ...(m.control_points[k] || {}), min: lo, max: hi }; });
+  m.targets = m.targets || {};
+  m.targets.va = fs.it.va;
+  if (num(m.targets.vma) == null || num(m.targets.vma) < fs.G.vma) m.targets.vma = fs.G.vma;
+  m.targets.pb_min = fs.pb[0];
+  changed({ now: true }); setTimeout(render, 350);
+  if (!quiet) toast(`${fs.label} loaded: gradation band, ${fmt(fs.it.va, 1)}% air voids, VMA at least ${fmt(fs.G.vma, 1)}%`);
+}
+function faaCard() {
+  const m = S.mix, sp = m.spec || {}, sma = mixType() === "sma";
+  const card = h("section", { class: "card faa" + (sp.faa ? " on" : "") });
+  const setSp = (k, v, apply) => { m.spec = { ...(m.spec || {}), [k]: v }; if (apply) applyFaa(); else { changed({ now: true }); render(); } };
+  const tick = h("input", { type: "checkbox", checked: sp.faa ? true : null, disabled: sma && !sp.faa ? true : null });
+  tick.addEventListener("change", () => {
+    if (tick.checked) { m.spec = { item: "P-401", grad: "auto", slag: false, ...(m.spec || {}), faa: true }; applyFaa(); }
+    else { m.spec = { ...(m.spec || {}), faa: false }; changed({ now: true }); render(); toast("FAA requirements off. The control points and targets stay until you change them."); }
+  });
+  card.append(h("div", { class: "faahead" },
+    h("label", { class: "check big" }, tick, h("span", {}, h("b", {}, "Design to FAA requirements"), " ", h("span", { class: "hint" }, "P-401, P-403 or P-404 from ", h("a", { href: FAA_URL, target: "_blank", rel: "noopener" }, FAA_SRC)))),
+    sma ? h("span", { class: "hint" }, "These items are dense-graded. For SMA, use the AASHTO M 325 band below.") : null));
+  const fs = faaSpec();
+  if (!fs) return card;
+  const itemSel = h("select", { "aria-label": "FAA item" }, Object.entries(FAA_ITEMS).map(([k, it]) => h("option", { value: k, selected: k === fs.item ? true : null }, it.name)));
+  itemSel.addEventListener("change", () => { const g = (m.spec.grad && FAA_ITEMS[itemSel.value].grads[m.spec.grad]) ? m.spec.grad : "auto"; m.spec = { ...m.spec, item: itemSel.value, grad: g }; applyFaa(); });
+  const det = faaAutoGrad(fs.item);
+  const gradSel = h("select", { "aria-label": "FAA gradation" }, h("option", { value: "auto", selected: fs.auto ? true : null }, `Match my blend (${fs.it.grads[det].label})`),
+    Object.entries(fs.it.grads).map(([k, G]) => h("option", { value: k, selected: !fs.auto && k === fs.g ? true : null }, `${G.label}, ${G.size} maximum`)));
+  gradSel.addEventListener("change", () => setSp("grad", gradSel.value, true));
+  const aggSel = h("select", { "aria-label": "Aggregate type" }, h("option", { value: "0", selected: !fs.slag ? true : null }, "Stone or gravel"), h("option", { value: "1", selected: fs.slag ? true : null }, "Slag"));
+  aggSel.addEventListener("change", () => setSp("slag", aggSel.value === "1", true));
+  card.append(h("div", { class: "fgrid three" },
+    h("label", { class: "f" }, h("span", {}, "Item"), itemSel),
+    h("label", { class: "f" }, h("span", {}, "Gradation"), gradSel),
+    h("label", { class: "f" }, h("span", {}, "Aggregate, for binder range"), aggSel)));
+  const off = !fs.auto && det !== fs.g;
+  card.append(h("div", { class: "faasum" },
+    [["Minimum VMA", `${fmt(fs.G.vma, 1)}%`], ["Design air voids", `${fmt(fs.it.va, 1)}%${fs.it.vaTol ? " ± " + fs.it.vaTol : ""}`], ["Binder range", `${fs.pb[0]} to ${fs.pb[1]}%`], ["Compaction", fs.it.comp], ["Minimum lift", fs.G.lift]].map(([k, v]) => h("div", {}, h("span", { class: "k" }, k), h("b", {}, v)))),
+    h("p", { class: "hint" }, `Loaded: the ${fs.label} band as control points, ${fmt(fs.it.va, 1)}% air voids, ${fmt(num(m.targets?.vma), 1)}% VMA target and ${fs.pb[0]}% minimum binder. `,
+      fs.G.note ? fs.G.note + " " : "", fs.it.note ? fs.it.note + " " : "", "TSR and rutting tests are not covered here.",
+      h("button", { class: "btn link", onclick: () => applyFaa() }, "Load again")),
+    off ? h("div", { class: "notice" }, `Your blend's NMAS matches ${fs.it.grads[det].label}, not ${fs.G.label}. Check the gradation choice.`) : "");
+  return card;
 }
 async function runFit() {
   try { S.fit = await api("/api/fit", { mix: S.mix }); }
@@ -1341,7 +1428,7 @@ function renderLab(body, side, t) {
   body.append(h("section", { class: "card" }, h("h2", {}, "Mix and compaction"),
     h("div", { class: "fgrid four" },
       h("label", { class: "f" }, h("span", {}, "Binder content Pb, %"), numInput(R.concat("pb"))),
-      h("label", { class: "f" }, h("span", {}, "Gyrations, Ndes"), numInput(R.concat(["lab", "ndes"]), { placeholder: "e.g. 75" })),
+      h("label", { class: "f" }, h("span", {}, "Gyrations, Ndes"), numInput(R.concat(["lab", "ndes"]), { placeholder: faaSpec() ? `${faaSpec().it.nd} (FAA)` : "e.g. 75" })),
       h("label", { class: "f" }, h("span", {}, "Compaction temperature, °C"), numInput(R.concat(["lab", "temp"]), { placeholder: "optional" })),
       h("label", { class: "f" }, h("span", {}, "VCA dry-rodded, %"), numInput(R.concat("vcadrc"), { placeholder: "optional" })))));
   const sma = mixType() === "sma";
@@ -1395,7 +1482,8 @@ function renderResults(body, side, t) {
   const vo = off(v.vma, num(tg.vma), 1), ao = off(v.va, num(tg.va), 1);
   const vcad = num(t.results?.vcadrc) ?? num(tg.vcadrc);
   const kp = [["VMA", fmt(v.vma, 1) + "%", vo[0], vo[1]], ["Air voids", fmt(v.va, 1) + "%", ao[0], ao[1]], ["VFA", fmt(v.vfa, 1) + "%", (tg.vfa?.[0] != null || tg.vfa?.[1] != null) ? `limits ${tg.vfa?.[0] ?? "..."} to ${tg.vfa?.[1] ?? "..."}` : "no limit set", "plain"],
-    ["Binder, Pb", fmt(v.pb, 1) + "%", `effective ${fmt(v.pbe, 2)}%, absorbed ${fmt(v.pba, 2)}%`, "plain"]];
+    ["Binder, Pb", fmt(v.pb, 1) + "%", faaSpec() ? `${faaSpec().label}: ${faaSpec().pb[0]} to ${faaSpec().pb[1]}%` : `effective ${fmt(v.pbe, 2)}%, absorbed ${fmt(v.pba, 2)}%`,
+      faaSpec() ? (v.pb >= faaSpec().pb[0] - 1e-9 && v.pb <= faaSpec().pb[1] + 1e-9 ? "ok" : "off") : "plain"]];
   body.append(h("div", { class: "kpis four" }, kp.map(([k, val, n, c]) => h("div", { class: "kpi" }, h("span", { class: "k" }, k), h("b", {}, val), h("span", { class: "n " + c }, n)))));
   body.append(moreVolumetrics(a));
   const e = a.prediction_error;
@@ -1456,10 +1544,21 @@ function moreVolumetrics(a) {
       grp("Coarse aggregate contact (VCA check)"),
       row("VCAmix", fmt(ck.vca_mix ?? v.vca_mix, 1) + "%", ck.rule || "", "", "vca"),
       row("Check", ck.ok == null ? "-" : ck.ok ? "passes" : "does not pass", ck.text || "", ck.ok == null ? "" : ck.ok ? "st-ok" : "st-high"),
+      ...faaRows(v, row, grp),
       dd != null ? grp("Optional tests") : null,
       dd != null ? row("Draindown", fmt(dd, 2) + "%", "AASHTO T 305. SMA limit 0.3% (AASHTO M 325)", dd > 0.3 ? "st-high" : "st-ok", "draindown") : null)));
   d.addEventListener("toggle", () => (S.moreOpen = d.open));
   return d;
+}
+function faaRows(v, row, grp) {
+  const fs = faaSpec(); if (!fs) return [];
+  const ok = (b) => (b ? "st-ok" : "st-high");
+  const vaD = v.va - fs.it.va, vaOk = Math.abs(vaD) <= (fs.it.vaTol ?? 0.05) + 1e-9;
+  return [grp(`FAA ${fs.label}`),
+    row("VMA", fmt(v.vma, 1) + "%", `at least ${fmt(fs.G.vma, 1)}%`, ok(v.vma >= fs.G.vma - 1e-9)),
+    row("Air voids", fmt(v.va, 1) + "%", `design value ${fmt(fs.it.va, 1)}%${fs.it.vaTol ? " ± " + fs.it.vaTol : ""}${vaOk ? "" : `. Set the design binder where air voids are ${fmt(fs.it.va, 1)}%.`}`, vaOk ? "st-ok" : ""),
+    row("Binder, Pb", fmt(v.pb, 2) + "%", `${fs.pb[0]} to ${fs.pb[1]}% (${fs.slag ? "slag" : "stone or gravel"})`, ok(v.pb >= fs.pb[0] - 1e-9 && v.pb <= fs.pb[1] + 1e-9)),
+    row("Gradation", "", "see Gradation checks: the FAA band is loaded as control points", "")];
 }
 function renderTrialSide(side, t) {
   side.innerHTML = "";

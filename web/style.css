@@ -441,3 +441,16 @@ table.cmp .arw { font-size: 11px; }
   .page.two { grid-template-columns: minmax(0, 1fr) 560px; }
   .page.three { grid-template-columns: 240px minmax(0, 1fr) 560px; }
 }
+
+/* v8: FAA requirements */
+.card.faa { padding-top: 14px; padding-bottom: 14px; }
+.card.faa.on { border-left: 4px solid var(--navy); }
+.faahead { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.check.big { margin: 0; font-size: 15px; }
+.check.big input { width: 18px; height: 18px; accent-color: var(--navy); }
+.card.faa .fgrid { margin-top: 12px; }
+.faasum { display: grid; grid-template-columns: 0.8fr 0.9fr 0.9fr 2fr 0.8fr; gap: 10px; margin-top: 12px; }
+.faasum div { background: var(--navy-soft); border-radius: 4px; padding: 8px 10px; }
+.faasum b { display: block; font: 700 16px/1.25 var(--display); color: var(--navy); margin-top: 2px; }
+.card.faa .hint .btn.link { margin-left: 6px; font-size: 13px; }
+.card.faa .notice { margin-top: 8px; }

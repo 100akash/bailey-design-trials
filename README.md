@@ -23,6 +23,8 @@ The tool has four steps, in tabs across the top.
 
 A **Bailey reference** page lists the typical values for every mix type.
 
+- FAA requirements (optional, in Criteria): P-401, P-403 and P-404 gradation bands, minimum VMA, design air voids and binder ranges from FAA AC 150/5370-10H (2018). Tick it and the band and targets load for the gradation that matches your blend.
+
 ## The method in brief
 
 - NMAS is one sieve larger than the first sieve with more than 15% cumulative retained.
