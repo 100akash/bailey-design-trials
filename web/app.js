@@ -120,6 +120,49 @@ function smallPiles(pct, locks) {
   return [out, pr.min_pile_pct];
 }
 const tolVMA = () => num(S.mix.targets?.vma_tol) ?? 0.3;
+
+/* ---------------------------------------------------------------- help text */
+const GLOSSARY = {
+  pcs: "Primary control sieve, 0.22 × NMAS. Material retained on it acts as coarse aggregate, material passing it as fine.",
+  cuw: "Chosen unit weight of the coarse aggregate, as a % of its rodded (SMA) or loose (dense) unit weight. It sets how much coarse aggregate the blend holds.",
+  CA: "CA ratio: how the coarse fraction packs. (% passing half sieve − % passing PCS) / (100 − % passing half sieve). Fine-graded mixes use the new CA ratio on the fine fraction.",
+  FAc: "FAc ratio: how the coarse part of the fine fraction packs. % passing SCS / % passing PCS.",
+  FAf: "FAf ratio: how the finest part packs. % passing TCS / % passing SCS.",
+  luw: "Loose unit weight of the stockpile (AASHTO T 19, shoveling). Needed for every coarse and fine stockpile.",
+  ruw: "Rodded unit weight of the stockpile (AASHTO T 19, rodding). Needed for every coarse and fine stockpile.",
+  vca: "Voids in the coarse aggregate. VCAmix is in the compacted mix. VCA dry-rodded is the coarse fraction alone, rodded. Lower VCAmix means stone-on-stone contact.",
+  pba: "Absorbed binder: binder soaked into the aggregate, from Gmm, Pb and Gsb. It does not coat the aggregate.",
+  pbe: "Effective binder: binder left to coat the aggregate. Pb minus the absorbed part.",
+  vbe: "Volume of effective binder in the mix, VMA minus air voids.",
+  gse: "Effective specific gravity of the aggregate, from Gmm and Pb. It sits between Gsb and the apparent gravity.",
+  gca: "Bulk specific gravity of the coarse fraction (retained on the PCS). Used for VCAmix.",
+  dust: "Dust proportion: % passing 0.075 mm divided by binder. AASHTO M 323 uses 0.6 to 1.2 on effective binder for dense mixes.",
+  balance: "The balance pile takes up the difference when you change another pile, so the total stays at 100%.",
+  phase: "Once predicted VMA is within your tolerance of the target, keep the blend and change only the binder for air voids.",
+  vfa: "Voids filled with asphalt: the share of VMA filled by effective binder.",
+};
+function tip(key, text) {
+  const t = text || GLOSSARY[key] || "";
+  return h("span", { class: "tip", tabindex: "0", role: "note", "aria-label": t, "data-tip": t }, "?");
+}
+function stockMissing() {
+  const msg = [];
+  usedSlots().forEach((s) => {
+    const m = S.mix.materials[s]; if (!(m?.name || "").trim()) return;
+    const k = S.meta.kind[s];
+    const miss = sieves().filter((sv) => num(m.grad?.[sv]) == null && +sv <= 25);
+    if (miss.length) msg.push(`${m.name}: gradation missing on ${miss.length} sieve${miss.length > 1 ? "s" : ""}.`);
+    if (!num(m.gsb)) msg.push(`${m.name}: needs Gsb.`);
+    if (k !== "F") { const miss2 = ["luw", "ruw"].filter((u) => !num(m[u])).map((u) => u.toUpperCase()); if (miss2.length) msg.push(`${m.name}: needs ${miss2.join(" and ")}.`); }
+  });
+  return msg;
+}
+const VMA_MIN = { sma: { all: 17.0, src: "AASHTO M 325" }, dense: { 37.5: 11, 25: 12, 19: 13, 12.5: 14, 9.5: 15, 4.75: 16, src: "AASHTO M 323" } };
+function typicalVMA() {
+  const n = S.an?.nmas ?? num(S.mix.settings.nmas_override);
+  if (mixType() === "sma") return [VMA_MIN.sma.all, VMA_MIN.sma.src];
+  return n && VMA_MIN.dense[n] ? [VMA_MIN.dense[n], VMA_MIN.dense.src] : null;
+}
 /* number input used everywhere */
 function numInput(path, opts = {}) {
   const v = getPath(S.mix, path);
@@ -283,19 +326,72 @@ function tabNote(k) {
   }
   return testedAn().length >= 2 ? "all trials, export" : "after 2 tests";
 }
+function stepState(k) {
+  const tg = S.mix.targets || {}, T = S.mix.trials || [];
+  if (k === "stockpiles") return readySlots().length >= 2 && !stockMissing().length ? "done" : readySlots().length ? "attn" : "todo";
+  if (k === "criteria") return num(tg.vma) != null && num(tg.va) != null ? "done" : "todo";
+  if (k === "trials") {
+    if (!T.length) return "todo";
+    const last = testedAn().pop();
+    if (T.some((t) => !isTested(t.id))) return "attn";
+    return last && onTarget(last.volumetrics) ? "done" : "attn";
+  }
+  return testedAn().length >= 2 ? "done" : "todo";
+}
+function onTarget(v) {
+  const tg = S.mix.targets || {};
+  if (!v?.complete || num(tg.vma) == null || num(tg.va) == null) return false;
+  return Math.abs(v.vma - tg.vma) <= tolVMA() && Math.abs(v.va - tg.va) <= 0.3;
+}
+const STATE_TITLE = { done: "Done", attn: "Needs your attention", todo: "Not started" };
 function tabsBar() {
   return h("nav", { class: "tabs", id: "tabs", "aria-label": "Design steps" }, TABS.map(([k, t], i) =>
     h("button", { class: "tab", "aria-current": S.tab === k ? "page" : null, onclick: () => { S.tab = k; render(); } },
-      h("b", {}, i + 1), h("span", { class: "tt" }, t), h("span", { class: "tn", id: "tn-" + k }, tabNote(k)))));
+      h("i", { class: "ti " + stepState(k), id: "ti-" + k, title: STATE_TITLE[stepState(k)] }, i + 1), h("span", { class: "tt" }, t), h("span", { class: "tn", id: "tn-" + k }, tabNote(k)))));
 }
-function updateTabs() { TABS.forEach(([k]) => { const e = $("#tn-" + k); if (e) e.textContent = tabNote(k); }); }
+function nextStep() {
+  const tg = S.mix.targets || {}, T = S.mix.trials || [];
+  const go = (tab, sel, sub) => () => { S.tab = tab; if (sel !== undefined) S.sel = sel; if (sub) S.sub = sub; render(); };
+  if (readySlots().length < 2) return ["Add at least two stockpiles with a gradation and Gsb.", "Go to Stockpiles", go("stockpiles")];
+  const miss = stockMissing();
+  if (miss.length) return [`Finish the stockpile data. ${miss[0]}${miss.length > 1 ? ` (and ${miss.length - 1} more)` : ""}`, "Go to Stockpiles", go("stockpiles")];
+  if (num(tg.vma) == null || num(tg.va) == null) return ["Set the VMA and air-void targets, and check the mix type and NMAS.", "Go to Criteria", go("criteria")];
+  if (!T.length) return ["Make Trial 1: generate it from Bailey inputs or enter a blend you have.", "Start Trial 1", go("trials", null)];
+  const pend = T.find((t) => !isTested(t.id));
+  if (pend) {
+    if (Math.abs(pctSum(pend.pct) - 100) > 0.05) return [`Finish the blend for ${pend.label}. It totals ${fmt(pctSum(pend.pct), 1)}%.`, `Open ${pend.label}`, go("trials", pend.id, "blend")];
+    return [`Mix and test ${pend.label}, then enter its Pb, Gmb and Gmm.`, `Enter ${pend.label} lab results`, go("trials", pend.id, "lab")];
+  }
+  const last = testedAn().pop(), v = last.volumetrics, lt = trialById(last.id);
+  if (onTarget(v)) return [`${lt.label} meets the VMA and air-void targets. Check the VCA and gradation, then compare the trials.`, "Go to Compare", go("compare")];
+  if (Math.abs(v.vma - tg.vma) <= tolVMA()) return [`VMA is on target in ${lt.label}. Keep the blend and tune the binder for ${fmt(tg.va, 1)}% air voids.`, "Plan a binder-only trial", () => { S.tab = "trials"; planNext(last.id, true); }];
+  return [`VMA is ${fmt(Math.abs(v.vma - tg.vma), 1)} ${v.vma > tg.vma ? "above" : "below"} target in ${lt.label}. Plan the next blend.`, `Plan Trial ${T.length + 1}`, () => { S.tab = "trials"; planNext(last.id); }];
+}
+function guideBar() {
+  const g = h("div", { class: "guide", id: "guide" });
+  fillGuide(g);
+  return g;
+}
+function fillGuide(g) {
+  if (!g) return;
+  g.innerHTML = "";
+  const [text, label, fn] = nextStep();
+  g.append(h("span", { class: "pill" }, "Next step"), h("span", { class: "gt" }, text), h("button", { class: "btn small primary", onclick: fn }, label + " →"));
+}
+function updateTabs() {
+  TABS.forEach(([k]) => {
+    const e = $("#tn-" + k); if (e) e.textContent = tabNote(k);
+    const i = $("#ti-" + k); if (i) { const st = stepState(k); i.className = "ti " + st; i.title = STATE_TITLE[st]; }
+  });
+  fillGuide($("#guide"));
+}
 
 function render() {
   S.refresh = null; S.beforeAnalyze = null;
   const app = $("#app"); app.innerHTML = "";
   updateTopbar();
   if (S.tab === "reference") { app.append(renderReference()); return; }
-  app.append(tabsBar());
+  app.append(tabsBar(), guideBar());
   const page = h("div", { class: "page" });
   app.append(page);
   ({ stockpiles: renderStockpiles, criteria: renderCriteria, trials: renderTrials, compare: renderCompare })[S.tab](page);
@@ -442,15 +538,16 @@ function renderStockpiles(page) {
   const body = h("tbody", {});
   sieves().forEach((sv, r) => body.append(h("tr", {}, h("th", { class: "rowh" }, lab(sv)[0], h("small", {}, lab(sv)[1])),
     slots.map((s, c) => h("td", {}, numInput(["materials", s, "grad", sv], { grid: [r, c, "mat"] }))), h("td", { class: "addcell" }))));
-  const props = [["gsb", "Gsb", ""], ["abs", "Absorption, %", ""], ["luw", "Loose unit weight", "uw"], ["ruw", "Rodded unit weight", "uw"]];
-  props.forEach(([k, tl, uw], i) => body.append(h("tr", { class: i === 0 ? "first" : null }, h("th", { class: "rowh" }, tl, uw ? h("small", {}, unitLabel()) : null),
+  const props = [["gsb", "Gsb", ""], ["abs", "Water absorption, %", ""], ["luw", "Loose unit weight", "uw"], ["ruw", "Rodded unit weight", "uw"]];
+  props.forEach(([k, tl, uw], i) => body.append(h("tr", { class: i === 0 ? "first" : null }, h("th", { class: "rowh" }, tl, uw ? h("small", {}, unitLabel()) : null, uw ? tip(k) : null),
     slots.map((s, c) => (uw && S.meta.kind[s] === "F") ? h("td", { class: "na", title: "Not used for fillers" }) : h("td", {}, numInput(["materials", s, k], { grid: [20 + i, c, "mat"] }))), h("td", { class: "addcell" }))));
   [["luw_voids", "Loose voids, %"], ["ruw_voids", "Rodded voids, %"], ["pcs", "Passing the PCS, %"]].forEach(([k, tl], i) =>
-    body.append(h("tr", { class: "calcrow" + (i === 0 ? " first" : "") }, h("th", { class: "rowh" }, tl, h("small", {}, "calculated")), slots.map((s) => h("td", { class: "calc", id: `chk-${k}-${s}` }, "-")), h("td", { class: "addcell" }))));
+    body.append(h("tr", { class: "calcrow" + (i === 0 ? " first" : "") }, h("th", { class: "rowh" }, tl, h("small", {}, "calculated"), k === "pcs" ? tip("pcs") : null), slots.map((s) => h("td", { class: "calc", id: `chk-${k}-${s}` }, "-")), h("td", { class: "addcell" }))));
   main.append(h("div", { class: "gridwrap" }, h("table", { class: "grid mat", id: "mat-grid" }, h("thead", {}, head), body)),
     h("div", { class: "row note" }, h("button", { class: "btn small", onclick: () => copyGrid("#mat-grid") }, "Copy table for Excel"),
       h("span", { class: "hint" }, "Click a cell and paste a block from Excel. Sieve labels and a row of names are recognised.")),
-    h("div", { id: "mat-notes" }));
+    h("div", { id: "mat-notes" }),
+    h("div", { class: "continue" }, h("button", { class: "btn primary", onclick: () => { S.tab = "criteria"; render(); } }, "Next: Criteria →")));
   S.refresh = () => {
     const typ = { CA: { luw: [43, 49], ruw: [37, 43] }, FA: { luw: [35, 43], ruw: [28, 36] } };
     const pcs = S.an?.control?.coarse_pcs;
@@ -475,15 +572,7 @@ function renderStockpiles(page) {
     const notes = $("#mat-notes");
     if (notes) {
       notes.innerHTML = "";
-      const msg = [];
-      slots.forEach((s) => {
-        const m = S.mix.materials[s]; if (!(m?.name || "").trim()) return;
-        const k = S.meta.kind[s];
-        const miss = sieves().filter((sv) => num(m.grad?.[sv]) == null && +sv <= 25);
-        if (miss.length) msg.push(`${m.name}: gradation missing on ${miss.length} sieve${miss.length > 1 ? "s" : ""}.`);
-        if (!num(m.gsb)) msg.push(`${m.name}: needs Gsb.`);
-        if (k !== "F") { const miss2 = ["luw", "ruw"].filter((u) => !num(m[u])).map((u) => u.toUpperCase()); if (miss2.length) msg.push(`${m.name}: needs ${miss2.join(" and ")}.`); }
-      });
+      const msg = stockMissing();
       if (msg.length) notes.append(h("div", { class: "notice" }, h("b", {}, "Still needed"), h("ul", {}, msg.map((x) => h("li", {}, x)))));
     }
     side.innerHTML = "";
@@ -673,7 +762,7 @@ function renderCriteria(page) {
   // volumetric targets
   const vol = [["vma", "VMA, %", "e.g. 17.0"], ["va", "Air voids, %", "e.g. 3.5"], ["pb_min", "Minimum binder, %", "optional"],
     [["vfa", 0], "VFA min, %", "optional"], [["vfa", 1], "VFA max, %", "optional"], ["vcadrc", "VCA dry-rodded, %", "once measured"], ["vma_tol", "Tune binder once VMA is within ±", "0.3"]];
-  left.append(h("section", { class: "card" }, h("h2", {}, "Volumetric targets"), h("p", { class: "hint" }, "The search aims for VMA. Binder is then set for the air voids."),
+  left.append(h("section", { class: "card" }, h("h2", {}, "Volumetric targets"), h("p", { class: "hint", id: "vma-hint" }, "The search aims for VMA. Binder is then set for the air voids."),
     h("div", { class: "fgrid three" }, vol.map(([k, t, ph]) => h("label", { class: "f" }, h("span", {}, t), numInput(["targets"].concat(k), { placeholder: ph }))))));
 
   // Bailey ranges
@@ -710,10 +799,13 @@ function renderCriteria(page) {
     h("label", { class: "check" }, h("span", {}, "A stockpile is 0% or at least"), numInput(["search", "min_pile_pct"], { cls: "tiny", label: "Minimum stockpile percent" }), h("span", {}, "%")),
     cb("min_fillers", pr.min_fillers, "Apply that minimum to fillers too"),
     cb("one_fine", pr.one_fine, "Prefer one fine aggregate. Two are kept only when it clearly helps."),
-    cb("lock_small_fillers", pr.lock_small_fillers, "Keep fillers at 2% or less fixed unless I unlock them")));
+    cb("lock_small_fillers", pr.lock_small_fillers, "Keep fillers at 2% or less fixed unless I unlock them")),
+    h("div", { class: "continue" }, h("button", { class: "btn primary", onclick: () => { S.tab = "trials"; render(); } }, "Next: Trials →")));
 
   S.refresh = () => {
     const ti = typeInfo(), dr = S.an?.default_ranges || {}, nm = S.an?.nmas, isFG = mixType() === "fg";
+    const tv = typicalVMA(), vh = $("#vma-hint");
+    if (vh) vh.textContent = `The search aims for VMA. Binder is then set for the air voids.${tv ? ` Typical minimum VMA: ${fmt(tv[0], 1)}% (${tv[1]}).` : ""}${mixType() === "sma" ? " AASHTO M 325 designs SMA at 4.0% air voids." : ""}`;
     const c = S.an?.control;
     banner.innerHTML = "";
     banner.append(h("span", { class: "grow" }, "Typical values loaded for ", h("b", {}, `${typeLabel()}${nm ? ", " + nm + " mm" : ""}`), ": ",
@@ -727,7 +819,7 @@ function renderCriteria(page) {
     if (!rb.contains(document.activeElement)) {
       rb.innerHTML = "";
       const cur = () => m.bailey_ranges || dr;
-      [["ca_ruw", ti.uw_label + " (chosen unit weight)"], ["CA", (isFG ? "New " : "") + "CA ratio"], ["FAc", (isFG ? "New " : "") + "FAc ratio"], ["FAf", (isFG ? "New " : "") + "FAf ratio"]].forEach(([k, t]) => {
+      [["ca_ruw", ti.uw_label + " (chosen unit weight)", "cuw"], ["CA", (isFG ? "New " : "") + "CA ratio", "CA"], ["FAc", (isFG ? "New " : "") + "FAc ratio", "FAc"], ["FAf", (isFG ? "New " : "") + "FAf ratio", "FAf"]].forEach(([k, t, tk]) => {
         const mk = (i) => {
           const inp = h("input", { type: "text", inputmode: "decimal", value: cur()[k]?.[i] ?? "", "aria-label": `${t} ${i ? "max" : "min"}` });
           inp.addEventListener("input", () => {
@@ -737,7 +829,7 @@ function renderCriteria(page) {
           });
           return inp;
         };
-        rb.append(h("tr", {}, h("th", { class: "rowh" }, t), h("td", {}, mk(0)), h("td", {}, mk(1)), h("td", { class: "calc" }, dr[k]?.[0] == null ? "-" : `${dr[k][0]} to ${dr[k][1]}`)));
+        rb.append(h("tr", {}, h("th", { class: "rowh" }, t, tip(tk)), h("td", {}, mk(0)), h("td", {}, mk(1)), h("td", { class: "calc" }, dr[k]?.[0] == null ? "-" : `${dr[k][0]} to ${dr[k][1]}`)));
       });
     }
     if (!rotBody.contains(document.activeElement)) {
@@ -854,7 +946,9 @@ function renderTrials(page) {
     h("div", { class: "row" }, h("span", { class: "hint" }, refT ? `Planned from ${refT.label}${t.option ? ", " + optTitle(t.option) : ""}.` : t.source === "bailey" ? "Built from Bailey inputs." : "Blend entered by you."),
       h("span", { class: "spacer" }), h("button", { class: "btn link danger", onclick: () => removeTrial(t.id) }, "Delete trial"))));
   const subs = [["blend", "1 Blend and binder"], ["lab", "2 Lab results"], ["results", "3 Results"]];
-  main.append(h("div", { class: "subtabs", role: "tablist" }, subs.map(([k, l]) => h("button", { role: "tab", "aria-selected": S.sub === k ? "true" : "false", onclick: () => { S.sub = k; render(); } }, l))));
+  const subDone = { blend: Math.abs(pctSum(t.pct) - 100) <= 0.05 && num(t.results?.pb) != null, lab: isTested(t.id), results: isTested(t.id) };
+  main.append(h("div", { class: "subtabs", role: "tablist" }, subs.map(([k, l]) => h("button", { role: "tab", "aria-selected": S.sub === k ? "true" : "false", onclick: () => { S.sub = k; render(); } },
+    h("i", { class: "si " + (subDone[k] ? "done" : "") }), l))));
   const body = h("div", { class: "subbody" });
   main.append(body);
   if (S.sub === "blend") renderBlend(body, side, t);
@@ -999,7 +1093,7 @@ function massBlock(t, tested) {
       !tested ? h("td", { class: "ctr" }, bal) : null);
   });
   box.append(h("table", { class: "grid blend" },
-    h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Stockpile"), ref ? h("th", {}, ref.label) : null, h("th", { class: "ctr" }, tested ? "%" : `${t.label}, %`), ref ? h("th", {}, "Change") : null, !tested ? h("th", { class: "ctr" }, "Lock") : null, !tested ? h("th", { class: "ctr" }, "Balance") : null)),
+    h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Stockpile"), ref ? h("th", {}, ref.label) : null, h("th", { class: "ctr" }, tested ? "%" : `${t.label}, %`), ref ? h("th", {}, "Change") : null, !tested ? h("th", { class: "ctr" }, "Lock") : null, !tested ? h("th", { class: "ctr" }, "Balance", tip("balance")) : null)),
     h("tbody", {}, rows, h("tr", { class: "total" }, h("th", { class: "rowh" }, "Total"), ref ? h("td", { class: "calc" }, "100.0") : null, h("td", { class: "calc strong", id: "blend-total" }, ""), h("td", { colspan: 3, id: "blend-fix" })))));
   const [small, mn] = smallPiles(t.pct, t.locks);
   if (small.length) box.append(h("p", { class: "warnline" }, small.map(([s, x]) => `${matName(s)} is ${fmt(x, 1)}%, below your ${fmt(mn, 1)}% practical minimum.`).join(" ")));
@@ -1207,7 +1301,7 @@ function baileyBars(refA, A) {
     const dist = (x) => (R[0] != null && x < R[0] ? R[0] - x : R[1] != null && x > R[1] ? x - R[1] : 0);
     const arrow = r == null ? "" : v > r + Math.pow(10, -d) / 2 ? "↑" : v < r - Math.pow(10, -d) / 2 ? "↓" : "=";
     const cls = r == null ? "" : dist(v) < dist(r) - 1e-6 ? "better" : dist(v) > dist(r) + 1e-6 ? "worse" : "";
-    return h("div", { class: "bar" }, h("span", { class: "bk" }, t),
+    return h("div", { class: "bar" }, h("span", { class: "bk" }, t, tip(k === "ca_ruw" ? "cuw" : k)),
       h("span", { class: "track" }, (R[0] != null || R[1] != null) ? h("i", { class: "rng", style: `left:${pos(R[0] ?? lo)}%;width:${pos(R[1] ?? hi) - pos(R[0] ?? lo)}%` }) : null,
         r != null ? h("i", { class: "ref", style: `left:calc(${pos(r)}% - 1px)` }) : null,
         h("i", { class: "cur " + (inR(v) ? "in" : "out"), style: `left:calc(${pos(v)}% - 2px)` })),
@@ -1243,9 +1337,9 @@ function renderLab(body, side, t) {
   L.spec.forEach((s, i) => sb.append(h("tr", {}, h("th", { class: "rowh" }, `Specimen ${i + 1}`),
     h("td", {}, numInput(R.concat(["gmb", i]), { grid: [i, 0, "spec" + idx], cls: "result" })),
     h("td", {}, numInput(R.concat(["lab", "spec", i, "h"]), { grid: [i, 1, "spec" + idx] })),
-    h("td", {}, numInput(R.concat(["lab", "spec", i, "mass"]), { grid: [i, 2, "spec" + idx] })))));
+    h("td", {}, numInput(R.concat(["lab", "spec", i, "mass"]), { grid: [i, 2, "spec" + idx] })), h("td", { class: "calc", id: "sva-" + i }, "-"))));
   body.append(h("section", { class: "card" }, h("h2", {}, "Compacted specimens"),
-    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, ""), h("th", {}, "Gmb"), h("th", {}, "Height, mm"), h("th", {}, "Mass, g"))), sb),
+    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, ""), h("th", {}, "Gmb"), h("th", {}, "Height, mm"), h("th", {}, "Mass, g"), h("th", {}, "Air voids, %"))), sb),
     h("div", { class: "row note" }, h("button", { class: "btn link", onclick: () => { L.spec.push({ h: null, mass: null }); t.results.gmb.push(null); changed(); render(); } }, "Add a specimen"),
       L.spec.length > 1 ? h("button", { class: "btn link", onclick: () => { L.spec.pop(); t.results.gmb.pop(); changed({ now: true }); render(); } }, "Remove last") : null,
       h("span", { class: "hint", id: "gmb-note" }))));
@@ -1257,6 +1351,8 @@ function renderLab(body, side, t) {
       t.results.gmm.length > 1 ? h("button", { class: "btn link", onclick: () => { t.results.gmm.pop(); changed({ now: true }); render(); } }, "Remove last") : null)));
   const upd = () => {
     const g = t.results.gmb.map(num).filter((x) => x != null);
+    const gm = t.results.gmm.map(num).filter((x) => x != null), gmA = gm.length ? gm.reduce((a2, b2) => a2 + b2, 0) / gm.length : null;
+    t.results.gmb.forEach((x, i) => { const e = $("#sva-" + i); if (e) e.textContent = num(x) && gmA ? fmt(100 * (1 - num(x) / gmA), 1) : "-"; });
     const note = $("#gmb-note");
     if (note) note.textContent = g.length > 1 && Math.max(...g) - Math.min(...g) > 0.02 ? `Gmb spread is ${fmt(Math.max(...g) - Math.min(...g), 3)}. More than about 0.02 is worth a check.` : "";
     renderTrialSide(side, t);
@@ -1310,7 +1406,9 @@ function renderResults(body, side, t) {
 function moreVolumetrics(a) {
   const v = a.volumetrics || {}, x = v.extra || {}, ck = x.vca_check || {};
   const rot = S.an?.rot || {};
-  const row = (k, val, note, cls) => h("tr", {}, h("th", { class: "rowh" }, k), h("td", { class: "calc strong" + (cls ? " " + cls : "") }, val), h("td", { class: "note" }, note || ""));
+  const row = (k, val, note, cls, tk) => h("tr", {}, h("th", { class: "rowh" }, k, tk ? tip(tk) : null), h("td", { class: "calc strong" + (cls ? " " + cls : "") }, val), h("td", { class: "note" }, note || ""));
+  const dense = mixType() !== "sma";
+  const dOut = (r) => dense && r != null && (r < 0.6 || r > 1.2);
   const grp = (k) => h("tr", { class: "grp" }, h("th", { colspan: 3 }, k));
   const share = x.pba_share;
   const d = h("details", { class: "card more", open: S.moreOpen ? true : null },
@@ -1318,20 +1416,23 @@ function moreVolumetrics(a) {
     h("table", { class: "grid vtable" }, h("tbody", {},
       grp("Binder"),
       row("Binder content, Pb", fmt(v.pb, 2) + "%", "by mass of total mix"),
-      row("Absorbed binder, Pba", fmt(v.pba, 2) + "%", "by mass of aggregate"),
-      row("Effective binder, Pbe", fmt(v.pbe, 2) + "%", "by mass of total mix"),
-      row("Effective binder volume, Vbe", fmt(x.vbe, 1) + "%", "VMA minus air voids"),
+      row("Absorbed binder, Pba", fmt(v.pba, 2) + "%", "by mass of aggregate", "", "pba"),
+      row("Effective binder, Pbe", fmt(v.pbe, 2) + "%", "by mass of total mix", "", "pbe"),
+      row("Effective binder volume, Vbe", fmt(x.vbe, 1) + "%", "VMA minus air voids", "", "vbe"),
+      row("VFA", fmt(v.vfa, 1) + "%", "share of VMA filled with effective binder", "", "vfa"),
       row("Combined water absorption", fmt(x.abs, 2) + "%", "from the stockpile absorptions"),
       row("Pba as a share of water absorption", fmt(share, 2), share == null ? "" : `the rules of thumb use ${fmt(rot.pba_abs ?? 0.65, 2)}${Math.abs(share - (rot.pba_abs ?? 0.65)) > 0.25 ? ". Check Gsb, absorption or Gmm." : ""}`, share != null && Math.abs(share - (rot.pba_abs ?? 0.65)) > 0.25 ? "st-high" : ""),
-      row("Dust to effective binder", fmt(x.dust_pbe, 2), "% passing 0.075 mm divided by Pbe"),
+      row("Dust to effective binder, P0.075/Pbe", fmt(x.dust_pbe, 2), dense ? "AASHTO M 323: 0.6 to 1.2" : "no limit for SMA in AASHTO M 325", dOut(x.dust_pbe) ? "st-high" : "", "dust"),
+      row("Dust to total binder, P0.075/Pb", fmt(x.dust_pb, 2), "some agencies use total binder", "", "dust"),
+      row("Mix density", x.density ? `${fmt(x.density, 0)} ${unitLabel()}` : "-", "Gmb times the density of water"),
       grp("Specific gravities"),
       row("Gmb, average", fmt(v.gmb, 3), x.gmb_n > 1 ? `${x.gmb_n} specimens, spread ${fmt(x.gmb_spread, 3)}` : `${x.gmb_n || 0} specimen`, x.gmb_spread > 0.02 ? "st-high" : ""),
       row("Gmm, average", fmt(v.gmm, 3), x.gmm_n > 1 ? `${x.gmm_n} samples, spread ${fmt(x.gmm_spread, 3)}` : `${x.gmm_n || 0} sample`, x.gmm_spread > 0.02 ? "st-high" : ""),
       row("Gsb of the blend", fmt(x.gsb, 3), "combined bulk specific gravity"),
-      row("Gse", fmt(v.gse, 3), "effective specific gravity, from Gmm and Pb"),
-      row("Gca", fmt(x.gca, 3), "coarse fraction, used for VCAmix"),
+      row("Gse", fmt(v.gse, 3), "effective specific gravity, from Gmm and Pb", "", "gse"),
+      row("Gca", fmt(x.gca, 3), "coarse fraction, used for VCAmix", "", "gca"),
       grp("Coarse aggregate contact (VCA check)"),
-      row("VCAmix", fmt(ck.vca_mix ?? v.vca_mix, 1) + "%", ck.rule || ""),
+      row("VCAmix", fmt(ck.vca_mix ?? v.vca_mix, 1) + "%", ck.rule || "", "", "vca"),
       row("Check", ck.ok == null ? "-" : ck.ok ? "passes" : "does not pass", ck.text || "", ck.ok == null ? "" : ck.ok ? "st-ok" : "st-high"))));
   d.addEventListener("toggle", () => (S.moreOpen = d.open));
   return d;
@@ -1641,3 +1742,18 @@ function gradTable(series, cps) {
 
 window.addEventListener("beforeunload", () => { if (S.mix && window.BDT_API) { window.BDT_API("/api/save", { file: S.file, mix: S.mix }); return; } if (S.mix) navigator.sendBeacon && navigator.sendBeacon("/api/save", new Blob([JSON.stringify({ file: S.file, mix: S.mix })], { type: "application/json" })); });
 boot();
+(function tipBox() {
+  const box = document.createElement("div"); box.id = "tipbox"; document.body.append(box);
+  const show = (e) => {
+    const t = e.target.closest?.(".tip"); if (!t) return;
+    box.textContent = t.dataset.tip; box.style.display = "block";
+    const r = t.getBoundingClientRect(), bw = box.offsetWidth, bh = box.offsetHeight;
+    let x = Math.min(window.innerWidth - bw - 8, Math.max(8, r.left + r.width / 2 - bw / 2)), y = r.bottom + 6;
+    if (y + bh > window.innerHeight - 8) y = r.top - bh - 6;
+    box.style.left = x + "px"; box.style.top = y + "px";
+  };
+  const hide = (e) => { if (e.target.closest?.(".tip")) box.style.display = "none"; };
+  document.addEventListener("mouseover", show); document.addEventListener("focusin", show);
+  document.addEventListener("mouseout", hide); document.addEventListener("focusout", hide);
+  document.addEventListener("scroll", () => (box.style.display = "none"), true);
+})();

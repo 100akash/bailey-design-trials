@@ -592,6 +592,8 @@ def trial_results(mix, trial, nmas):
         ex["pba_share"] = xround(vol["pba"] / a["abs"], 2) if a["abs"] else None
         p200 = a["gradation"].get(0.075)
         ex["dust_pbe"] = xround(p200 / vol["pbe"], 2) if vol.get("pbe") else None
+        ex["dust_pb"] = xround(p200 / pb, 2) if pb else None
+        ex["density"] = xround(vol["gmb"] * a["conv"], 0) if vol.get("gmb") else None
         ex["ps"] = xround(100 - pb, 2)
     mt = a.get("mix_type", "sma")
     vca = vol.get("vca_mix")

@@ -375,3 +375,23 @@ details.more summary .hint { margin: 0; }
 table.vtable { margin-top: 10px; }
 table.vtable td.note { text-align: left; color: var(--muted); font-size: 13px; white-space: normal; }
 table.vtable .rowh { width: 34%; }
+
+/* navigation cues (v5) */
+.tab .ti { font: 800 13px/1 var(--display); font-style: normal; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--field); color: var(--muted); align-self: center; }
+.tab .ti.done { background: var(--ok); border-color: var(--ok); color: #FFF; font-size: 0; }
+.tab .ti.done::after { content: "✓"; font-size: 13px; }
+.tab .ti.attn { border-color: var(--orange); color: var(--orange-dk); position: relative; }
+.tab .ti.attn::before { content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--orange); }
+.tab[aria-current] .ti.todo { border-color: var(--orange); color: var(--orange-dk); }
+.guide { display: flex; align-items: center; gap: 12px; padding: 9px 24px; background: var(--navy-soft); border-bottom: 1px solid var(--navy-line); }
+.guide .pill { font: 700 11px var(--display); letter-spacing: .06em; text-transform: uppercase; background: var(--navy); color: #FFF; padding: 3px 8px; border-radius: 3px; white-space: nowrap; }
+.guide .gt { flex: 1; color: var(--navy-hi); font-weight: 500; }
+.guide .btn { white-space: nowrap; }
+.continue { display: flex; justify-content: flex-end; margin-top: 14px; }
+.subtabs .si { display: inline-block; width: 15px; height: 15px; margin-right: 6px; border-radius: 50%; border: 2px solid var(--field); vertical-align: -2px; font-style: normal; }
+.subtabs .si.done { background: var(--ok); border-color: var(--ok); position: relative; }
+.subtabs .si.done::after { content: "✓"; color: #FFF; font-size: 10px; font-weight: 800; position: absolute; inset: 0; display: grid; place-items: center; line-height: 1; }
+.tip { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-left: 5px; border-radius: 50%; background: var(--navy-soft); border: 1px solid var(--navy-line); color: var(--navy); font: 700 10px/1 var(--sans); cursor: help; vertical-align: 1px; text-transform: none; letter-spacing: 0; }
+.tip:hover, .tip:focus { background: var(--navy); color: #FFF; outline: none; }
+table.ref thead th .tip, .bar .bk .tip { background: #FFF; }
+#tipbox { position: fixed; z-index: 100; max-width: 320px; padding: 8px 11px; background: var(--navy-hi); color: #FFF; font: 400 13px/1.4 var(--sans); border-radius: 4px; box-shadow: 0 4px 14px rgba(0,0,0,.25); pointer-events: none; display: none; text-align: left; white-space: normal; }
