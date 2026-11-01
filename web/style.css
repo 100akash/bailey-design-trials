@@ -395,3 +395,5 @@ table.vtable .rowh { width: 34%; }
 .tip:hover, .tip:focus { background: var(--navy); color: #FFF; outline: none; }
 table.ref thead th .tip, .bar .bk .tip { background: #FFF; }
 #tipbox { position: fixed; z-index: 100; max-width: 320px; padding: 8px 11px; background: var(--navy-hi); color: #FFF; font: 400 13px/1.4 var(--sans); border-radius: 4px; box-shadow: 0 4px 14px rgba(0,0,0,.25); pointer-events: none; display: none; text-align: left; white-space: normal; }
+details.more.opt .fgrid { margin-top: 10px; align-items: end; }
+.fgrid .span3 { grid-column: span 3; margin: 0 0 6px; }

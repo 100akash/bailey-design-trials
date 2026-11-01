@@ -65,7 +65,7 @@ References:
 - Pine, W.J. *The Bailey Method: Achieving Volumetrics and HMA Compactability.* Course manual, 2023 class. Source of the typical values.
 - Vavrik, W.R., Huber, G., Pine, W.J., Carpenter, S.H., and Bailey, R. (2002). *Bailey Method for Gradation Selection in HMA Mixture Design.* Transportation Research Circular E-C044, Transportation Research Board. https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf
 
-This tool is not endorsed by the FAA or by any Bailey Method course.
+This is an independent tool. It is not endorsed by any agency or by any Bailey Method course.
 
 Fonts: IBM Plex Sans and Overpass from Google Fonts.
 

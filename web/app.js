@@ -139,6 +139,7 @@ const GLOSSARY = {
   dust: "Dust proportion: % passing 0.075 mm divided by binder. AASHTO M 323 uses 0.6 to 1.2 on effective binder for dense mixes.",
   balance: "The balance pile takes up the difference when you change another pile, so the total stays at 100%.",
   phase: "Once predicted VMA is within your tolerance of the target, keep the blend and change only the binder for air voids.",
+  draindown: "Binder that drains from loose mix held at production temperature (AASHTO T 305). It shows if the mix can hold its binder during storage and hauling.",
   vfa: "Voids filled with asphalt: the share of VMA filled by effective binder.",
 };
 function tip(key, text) {
@@ -406,7 +407,7 @@ function aboutBlock() {
     h("p", {}, "References: Pine, W.J. ", h("i", {}, "The Bailey Method: Achieving Volumetrics and HMA Compactability"), ", course manual (2023 class), the source of the typical values. Vavrik, W.R., Huber, G., Pine, W.J., Carpenter, S.H., and Bailey, R. (2002). ",
       h("a", { href: "https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf", target: "_blank", rel: "noopener" }, h("i", {}, "Bailey Method for Gradation Selection in HMA Mixture Design")),
       ". Transportation Research Circular E-C044, Transportation Research Board."),
-    h("p", { class: "disclaimer" }, "Predictions use rules of thumb and are estimates only. Confirm every trial in the lab. This tool is not endorsed by the FAA or by any Bailey Method course."));
+    h("p", { class: "disclaimer" }, "Predictions use rules of thumb and are estimates only. Confirm every trial in the lab. This is an independent tool. It is not endorsed by any agency or by any Bailey Method course."));
 }
 async function home() {
   S.mix = null; S.file = null; S.an = null; S.live = {}; S.sugg = {}; S.addedSlots = {}; S.refresh = null;
@@ -1333,6 +1334,12 @@ function renderLab(body, side, t) {
       h("label", { class: "f" }, h("span", {}, "Gyrations, Ndes"), numInput(R.concat(["lab", "ndes"]), { placeholder: "e.g. 75" })),
       h("label", { class: "f" }, h("span", {}, "Compaction temperature, °C"), numInput(R.concat(["lab", "temp"]), { placeholder: "optional" })),
       h("label", { class: "f" }, h("span", {}, "VCA dry-rodded, %"), numInput(R.concat("vcadrc"), { placeholder: "optional" })))));
+  const sma = mixType() === "sma";
+  const optCard = (h("details", { class: "card more opt", open: sma || num(t.results?.lab?.draindown) != null ? true : null },
+    h("summary", {}, h("span", { class: "t" }, "Optional tests"), h("span", { class: "hint" }, sma ? "draindown, recommended for SMA" : "draindown")),
+    h("div", { class: "fgrid four" },
+      h("label", { class: "f" }, h("span", {}, "Draindown, %", tip("draindown")), numInput(R.concat(["lab", "draindown"]), { placeholder: "optional" })),
+      h("p", { class: "hint span3" }, "AASHTO T 305, basket method, at the expected production temperature. AASHTO M 325 limits SMA to 0.3%. If it is high, add or change the fiber or check the binder content."))));
   const sb = h("tbody", {});
   L.spec.forEach((s, i) => sb.append(h("tr", {}, h("th", { class: "rowh" }, `Specimen ${i + 1}`),
     h("td", {}, numInput(R.concat(["gmb", i]), { grid: [i, 0, "spec" + idx], cls: "result" })),
@@ -1349,6 +1356,7 @@ function renderLab(body, side, t) {
     h("table", { class: "grid compact narrow" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, ""), h("th", {}, "Gmm"))), gb),
     h("div", { class: "row note" }, h("button", { class: "btn link", onclick: () => { t.results.gmm.push(null); changed(); render(); } }, "Add a sample"),
       t.results.gmm.length > 1 ? h("button", { class: "btn link", onclick: () => { t.results.gmm.pop(); changed({ now: true }); render(); } }, "Remove last") : null)));
+  body.append(optCard);
   const upd = () => {
     const g = t.results.gmb.map(num).filter((x) => x != null);
     const gm = t.results.gmm.map(num).filter((x) => x != null), gmA = gm.length ? gm.reduce((a2, b2) => a2 + b2, 0) / gm.length : null;
@@ -1411,6 +1419,7 @@ function moreVolumetrics(a) {
   const dOut = (r) => dense && r != null && (r < 0.6 || r > 1.2);
   const grp = (k) => h("tr", { class: "grp" }, h("th", { colspan: 3 }, k));
   const share = x.pba_share;
+  const dd = num(trialById(a.id)?.results?.lab?.draindown);
   const d = h("details", { class: "card more", open: S.moreOpen ? true : null },
     h("summary", {}, h("span", { class: "t" }, "More volumetrics"), h("span", { class: "hint" }, "absorbed binder, specific gravities, dust ratio and the VCA check")),
     h("table", { class: "grid vtable" }, h("tbody", {},
@@ -1433,7 +1442,9 @@ function moreVolumetrics(a) {
       row("Gca", fmt(x.gca, 3), "coarse fraction, used for VCAmix", "", "gca"),
       grp("Coarse aggregate contact (VCA check)"),
       row("VCAmix", fmt(ck.vca_mix ?? v.vca_mix, 1) + "%", ck.rule || "", "", "vca"),
-      row("Check", ck.ok == null ? "-" : ck.ok ? "passes" : "does not pass", ck.text || "", ck.ok == null ? "" : ck.ok ? "st-ok" : "st-high"))));
+      row("Check", ck.ok == null ? "-" : ck.ok ? "passes" : "does not pass", ck.text || "", ck.ok == null ? "" : ck.ok ? "st-ok" : "st-high"),
+      dd != null ? grp("Optional tests") : null,
+      dd != null ? row("Draindown", fmt(dd, 2) + "%", "AASHTO T 305. SMA limit 0.3% (AASHTO M 325)", dd > 0.3 ? "st-high" : "st-ok", "draindown") : null)));
   d.addEventListener("toggle", () => (S.moreOpen = d.open));
   return d;
 }
