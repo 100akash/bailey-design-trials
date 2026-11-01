@@ -23,7 +23,7 @@ The tool has four steps, in tabs across the top.
 
 A **Bailey reference** page lists the typical values for every mix type.
 
-- FAA requirements (optional, in Criteria): P-401, P-403 and P-404 gradation bands, minimum VMA, design air voids and binder ranges from FAA AC 150/5370-10H (2018). Tick it and the band and targets load for the gradation that matches your blend.
+- Agency requirements (optional, in Criteria): FAA AC 150/5370-10H items P-401, P-403 and P-404, or UFGS 32 12 15.13 (airfield asphalt), 32 12 15.16 (SMA) and 32 12 17.19 (fuel resistant). The gradation band, minimum VMA, design air voids and other limits load for the gradation that matches your blend, and Results checks each trial against them.
 
 ## The method in brief
 

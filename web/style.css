@@ -454,3 +454,12 @@ table.cmp .arw { font-size: 11px; }
 .faasum b { display: block; font: 700 16px/1.25 var(--display); color: var(--navy); margin-top: 2px; }
 .card.faa .hint .btn.link { margin-left: 6px; font-size: 13px; }
 .card.faa .notice { margin-top: 8px; }
+.faahead > b { font: 700 16px var(--display); color: var(--navy); }
+.segs { display: inline-flex; border: 1px solid var(--navy-line); border-radius: 6px; overflow: hidden; }
+.segs .seg { background: #FFF; border: 0; border-right: 1px solid var(--navy-line); padding: 7px 14px; font-weight: 600; font-size: 14px; color: var(--navy); cursor: pointer; }
+.segs .seg:last-child { border-right: 0; }
+.segs .seg:hover:not(:disabled) { background: var(--navy-soft); }
+.segs .seg.on { background: var(--navy); color: #FFF; }
+.segs .seg:disabled { color: #A8A6A0; cursor: not-allowed; }
+.f.srcf a { display: block; padding: 9px 0; font-weight: 600; }
+.segs .seg.on, .segs .seg.on:hover { background: var(--navy); color: #FFF; }
