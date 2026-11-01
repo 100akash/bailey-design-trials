@@ -581,6 +581,36 @@ def trial_results(mix, trial, nmas):
     if vcadrc and vol.get("vca_mix") is not None:
         vol["vca_ok"] = vol["vca_mix"] <= vcadrc
     vol["complete"] = all(vol.get(k) is not None for k in ("vma", "va", "pba"))
+    # extra volumetrics for the Results screen
+    gl = [num(x) for x in (res.get("gmb") or []) if num(x)]
+    ml = [num(x) for x in (res.get("gmm") or []) if num(x)]
+    ex = {"gsb": a["gsb"], "gca": a["gca"], "abs": a["abs"],
+          "gmb_n": len(gl), "gmb_spread": xround(max(gl) - min(gl), 3) if len(gl) > 1 else None,
+          "gmm_n": len(ml), "gmm_spread": xround(max(ml) - min(ml), 3) if len(ml) > 1 else None}
+    if vol.get("complete"):
+        ex["vbe"] = xround(vol["vma"] - vol["va"], 2)
+        ex["pba_share"] = xround(vol["pba"] / a["abs"], 2) if a["abs"] else None
+        p200 = a["gradation"].get(0.075)
+        ex["dust_pbe"] = xround(p200 / vol["pbe"], 2) if vol.get("pbe") else None
+        ex["ps"] = xround(100 - pb, 2)
+    mt = a.get("mix_type", "sma")
+    vca = vol.get("vca_mix")
+    chk = {"rule": TYPE_INFO[mt]["vca"], "vca_mix": vca, "ok": None, "limit": None}
+    if vca is not None:
+        if mt == "sma":
+            if vcadrc:
+                chk.update(limit=vcadrc, ok=vca <= vcadrc, text=f"VCAmix {vca:.1f}% vs VCA dry-rodded {vcadrc:.1f}%")
+            else:
+                chk["text"] = "Enter VCA dry-rodded to check stone-on-stone contact."
+        else:
+            fa = (a.get("bailey") or {}).get("vol_fa")
+            if fa is not None:
+                if mt == "cg":
+                    chk.update(limit=xround(fa, 1), ok=vca <= fa, text=f"VCAmix {vca:.1f}% vs fine aggregate volume {fa:.1f}%")
+                else:
+                    chk.update(limit=xround(fa, 1), ok=(fa - 5) <= vca <= (fa - 3), text=f"VCAmix {vca:.1f}% vs fine aggregate volume {fa:.1f}% (aim 3 to 5% below)")
+    ex["vca_check"] = chk
+    vol["extra"] = ex
     a["volumetrics"] = vol
     pred = trial.get("prediction")
     if pred and vol.get("vma") is not None:

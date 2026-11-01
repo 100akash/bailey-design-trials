@@ -1281,9 +1281,9 @@ function renderResults(body, side, t) {
   const vo = off(v.vma, num(tg.vma), 1), ao = off(v.va, num(tg.va), 1);
   const vcad = num(t.results?.vcadrc) ?? num(tg.vcadrc);
   const kp = [["VMA", fmt(v.vma, 1) + "%", vo[0], vo[1]], ["Air voids", fmt(v.va, 1) + "%", ao[0], ao[1]], ["VFA", fmt(v.vfa, 1) + "%", (tg.vfa?.[0] != null || tg.vfa?.[1] != null) ? `limits ${tg.vfa?.[0] ?? "..."} to ${tg.vfa?.[1] ?? "..."}` : "no limit set", "plain"],
-    ["VCAmix", fmt(v.vca_mix, 1) + "%", vcad ? `VCA dry-rodded ${fmt(vcad, 1)}%` : "add VCA dry-rodded to check", vcad ? (v.vca_ok ? "ok" : "off") : "plain"],
-    ["Effective binder", fmt(v.pbe, 2) + "%", `Pba ${fmt(v.pba, 2)}%, Gse ${fmt(v.gse, 3)}`, "plain"]];
-  body.append(h("div", { class: "kpis" }, kp.map(([k, val, n, c]) => h("div", { class: "kpi" }, h("span", { class: "k" }, k), h("b", {}, val), h("span", { class: "n " + c }, n)))));
+    ["Binder, Pb", fmt(v.pb, 1) + "%", `effective ${fmt(v.pbe, 2)}%, absorbed ${fmt(v.pba, 2)}%`, "plain"]];
+  body.append(h("div", { class: "kpis four" }, kp.map(([k, val, n, c]) => h("div", { class: "kpi" }, h("span", { class: "k" }, k), h("b", {}, val), h("span", { class: "n " + c }, n)))));
+  body.append(moreVolumetrics(a));
   const e = a.prediction_error;
   if (t.prediction && e) {
     body.append(h("section", { class: "card" }, h("h2", {}, "How the prediction did"),
@@ -1306,6 +1306,35 @@ function renderResults(body, side, t) {
   renderTrialSide(side, t);
   const rr = () => render(); rr.isRender = true;
   S.refresh = rr;
+}
+function moreVolumetrics(a) {
+  const v = a.volumetrics || {}, x = v.extra || {}, ck = x.vca_check || {};
+  const rot = S.an?.rot || {};
+  const row = (k, val, note, cls) => h("tr", {}, h("th", { class: "rowh" }, k), h("td", { class: "calc strong" + (cls ? " " + cls : "") }, val), h("td", { class: "note" }, note || ""));
+  const grp = (k) => h("tr", { class: "grp" }, h("th", { colspan: 3 }, k));
+  const share = x.pba_share;
+  const d = h("details", { class: "card more", open: S.moreOpen ? true : null },
+    h("summary", {}, h("span", { class: "t" }, "More volumetrics"), h("span", { class: "hint" }, "absorbed binder, specific gravities, dust ratio and the VCA check")),
+    h("table", { class: "grid vtable" }, h("tbody", {},
+      grp("Binder"),
+      row("Binder content, Pb", fmt(v.pb, 2) + "%", "by mass of total mix"),
+      row("Absorbed binder, Pba", fmt(v.pba, 2) + "%", "by mass of aggregate"),
+      row("Effective binder, Pbe", fmt(v.pbe, 2) + "%", "by mass of total mix"),
+      row("Effective binder volume, Vbe", fmt(x.vbe, 1) + "%", "VMA minus air voids"),
+      row("Combined water absorption", fmt(x.abs, 2) + "%", "from the stockpile absorptions"),
+      row("Pba as a share of water absorption", fmt(share, 2), share == null ? "" : `the rules of thumb use ${fmt(rot.pba_abs ?? 0.65, 2)}${Math.abs(share - (rot.pba_abs ?? 0.65)) > 0.25 ? ". Check Gsb, absorption or Gmm." : ""}`, share != null && Math.abs(share - (rot.pba_abs ?? 0.65)) > 0.25 ? "st-high" : ""),
+      row("Dust to effective binder", fmt(x.dust_pbe, 2), "% passing 0.075 mm divided by Pbe"),
+      grp("Specific gravities"),
+      row("Gmb, average", fmt(v.gmb, 3), x.gmb_n > 1 ? `${x.gmb_n} specimens, spread ${fmt(x.gmb_spread, 3)}` : `${x.gmb_n || 0} specimen`, x.gmb_spread > 0.02 ? "st-high" : ""),
+      row("Gmm, average", fmt(v.gmm, 3), x.gmm_n > 1 ? `${x.gmm_n} samples, spread ${fmt(x.gmm_spread, 3)}` : `${x.gmm_n || 0} sample`, x.gmm_spread > 0.02 ? "st-high" : ""),
+      row("Gsb of the blend", fmt(x.gsb, 3), "combined bulk specific gravity"),
+      row("Gse", fmt(v.gse, 3), "effective specific gravity, from Gmm and Pb"),
+      row("Gca", fmt(x.gca, 3), "coarse fraction, used for VCAmix"),
+      grp("Coarse aggregate contact (VCA check)"),
+      row("VCAmix", fmt(ck.vca_mix ?? v.vca_mix, 1) + "%", ck.rule || ""),
+      row("Check", ck.ok == null ? "-" : ck.ok ? "passes" : "does not pass", ck.text || "", ck.ok == null ? "" : ck.ok ? "st-ok" : "st-high"))));
+  d.addEventListener("toggle", () => (S.moreOpen = d.open));
+  return d;
 }
 function renderTrialSide(side, t) {
   side.innerHTML = "";
