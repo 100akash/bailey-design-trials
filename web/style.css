@@ -397,3 +397,47 @@ table.ref thead th .tip, .bar .bk .tip { background: #FFF; }
 #tipbox { position: fixed; z-index: 100; max-width: 320px; padding: 8px 11px; background: var(--navy-hi); color: #FFF; font: 400 13px/1.4 var(--sans); border-radius: 4px; box-shadow: 0 4px 14px rgba(0,0,0,.25); pointer-events: none; display: none; text-align: left; white-space: normal; }
 details.more.opt .fgrid { margin-top: 10px; align-items: end; }
 .fgrid .span3 { grid-column: span 3; margin: 0 0 6px; }
+
+/* v7: references, Bailey movement, enlarged chart */
+.about .reflbl { margin: 4px 0 2px; font-weight: 600; color: var(--ink); }
+ul.refs { margin: 0 0 10px; padding-left: 18px; }
+ul.refs li { margin: 2px 0; }
+.reference ul.refs { font-size: 14px; }
+.bar { grid-template-columns: 96px minmax(0, 1fr) 112px; }
+.bar.withref { padding: 9px 0 3px; }
+.bar .mv { position: absolute; top: -8px; height: 2px; background: currentColor; color: var(--muted2); border-radius: 1px; }
+.bar .mv.better { color: var(--ok); }
+.bar .mv.worse { color: var(--bad); }
+.bar .mv::after { content: ""; position: absolute; right: -2px; top: -4px; border-left: 7px solid currentColor; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+.bar .mv.left::after { right: auto; left: -2px; border-left: 0; border-right: 7px solid currentColor; }
+.bar .bv .old { color: var(--muted2); }
+.bar .bv .dl { display: inline-block; min-width: 38px; margin-left: 6px; font-size: 11.5px; font-weight: 700; color: var(--muted2); }
+.bar .bv .dl.better { color: var(--ok); }
+.bar .bv .dl.worse { color: var(--bad); }
+.barkey { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.barkey .k::before { content: ""; display: inline-block; vertical-align: middle; margin-right: 5px; }
+.barkey .ref::before { width: 3px; height: 12px; background: #9AA0A6; }
+.barkey .cur::before { width: 4px; height: 13px; background: var(--navy); border-radius: 1px; }
+.barkey .mvb::before { width: 16px; height: 2px; background: var(--ok); }
+.barkey .mvw::before { width: 16px; height: 2px; background: var(--bad); }
+.barkey .band::before { width: 16px; height: 8px; background: var(--ok-band); border-radius: 4px; }
+table.cmp .arw { font-size: 11px; }
+.chart.zoomable svg { cursor: zoom-in; }
+.legend .enl { margin-left: auto; font-size: 12.5px; }
+.overlay { position: fixed; inset: 0; z-index: 90; background: rgba(12, 27, 51, .55); display: grid; place-items: center; padding: 24px; overflow: auto; }
+.bigcard { background: #FFF; border-radius: 8px; padding: 20px 24px 16px; width: min(1240px, 100%); max-height: calc(100vh - 48px); overflow: auto; box-shadow: 0 24px 70px rgba(0, 0, 0, .3); }
+.bigcard .chart svg { cursor: default; }
+.chart .nums .conn { fill: none; stroke: var(--navy-line); stroke-width: 1; }
+.chart .nums .guide { stroke: var(--rule-lt); stroke-dasharray: 2 3; }
+.chart .nums .sep { stroke: var(--rule-lt); }
+.chart .nums .hmm { font: 600 12px var(--sans); fill: #2B2B28; }
+.chart .nums .hus { font: 500 10.5px var(--sans); fill: var(--muted2); }
+.chart .nums .nlab { font: 600 12.5px var(--sans); fill: var(--ink); }
+.chart .nums .nlab.lim { fill: var(--muted); font-weight: 500; }
+.chart .nums .nv { font: 600 12.5px var(--sans); fill: #33332F; font-variant-numeric: tabular-nums; }
+.chart .nums .nv.out { fill: var(--bad); font-weight: 800; }
+.chart .nums .nv.softout { fill: var(--maroon); text-decoration: underline wavy; }
+@media (min-width: 1640px) {
+  .page.two { grid-template-columns: minmax(0, 1fr) 560px; }
+  .page.three { grid-template-columns: 240px minmax(0, 1fr) 560px; }
+}

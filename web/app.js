@@ -400,13 +400,18 @@ function render() {
 }
 
 /* ---------------------------------------------------------------- home */
+function refList() {
+  return h("ul", { class: "refs" },
+    h("li", {}, "Pine, W.J. ", h("i", {}, "The Bailey Method: Achieving Volumetrics and HMA Compactability"), "."),
+    h("li", {}, "Vavrik, W.R., Huber, G., Pine, W.J., Carpenter, S.H., and Bailey, R. (2002). ",
+      h("a", { href: "https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf", target: "_blank", rel: "noopener" }, h("i", {}, "Bailey Method for Gradation Selection in HMA Mixture Design")),
+      ". Transportation Research Circular E-C044, Transportation Research Board."));
+}
 function aboutBlock() {
   return h("footer", { class: "about" },
     h("p", {}, h("b", {}, "Bailey Design Trials. "), "Developed by Akash Bajaj, Illinois Center for Transportation, University of Illinois Urbana-Champaign. ",
       h("a", { href: "https://github.com/100akash/bailey-design-trials", target: "_blank", rel: "noopener" }, "Source code and instructions"), "."),
-    h("p", {}, "References: Pine, W.J. ", h("i", {}, "The Bailey Method: Achieving Volumetrics and HMA Compactability"), ", course manual (2023 class), the source of the typical values. Vavrik, W.R., Huber, G., Pine, W.J., Carpenter, S.H., and Bailey, R. (2002). ",
-      h("a", { href: "https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf", target: "_blank", rel: "noopener" }, h("i", {}, "Bailey Method for Gradation Selection in HMA Mixture Design")),
-      ". Transportation Research Circular E-C044, Transportation Research Board."),
+    h("p", { class: "reflbl" }, "References"), refList(),
     h("p", { class: "disclaimer" }, "Predictions use rules of thumb and are estimates only. Confirm every trial in the lab. This is an independent tool. It is not endorsed by any agency or by any Bailey Method course."));
 }
 async function home() {
@@ -579,7 +584,7 @@ function renderStockpiles(page) {
     side.innerHTML = "";
     const series = readySlots().map((s) => ({ name: matName(s), grad: S.mix.materials[s].grad, color: slotColor(s), cls: "pile" }));
     side.append(h("div", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "Stockpile gradations"), scaleToggle()),
-      chartBox(gradChart({ series, nmas: S.an?.nmas, cps: {} }), series),
+      chartBox(gradChart({ series, nmas: S.an?.nmas, cps: {} }), series, false, { nmas: S.an?.nmas, cps: null }),
       h("p", { class: "caption" }, S.an?.nmas ? `Dashed lines mark the Bailey control sieves for ${S.an.nmas} mm. The shaded side is the coarse fraction.` : "The Bailey control sieves appear once the NMAS is set in Criteria or by Trial 1.")),
       h("div", { class: "card" }, h("h2", {}, "Values on the chart"), gradTable(series, null)));
   };
@@ -1293,21 +1298,26 @@ function baileyBars(refA, A) {
   const isFG = mixType() === "fg";
   const rows = [["ca_ruw", typeInfo().uw_label, (a) => a?.bailey?.cuw_pct, 1, [Math.min(50, (rng.ca_ruw?.[0] ?? 100) - 20), (rng.ca_ruw?.[1] ?? 120) + 15]],
     ["CA", (isFG ? "New " : "") + "CA", (a) => a?.ratios?.CA, 2, [0, isFG ? 1.4 : 1.0]], ["FAc", (isFG ? "New " : "") + "FAc", (a) => a?.ratios?.FAc, 2, [0.2, 1.0]], ["FAf", (isFG ? "New " : "") + "FAf", (a) => a?.ratios?.FAf, 2, [0.2, 1.0]]];
-  return h("div", { class: "bars" }, rows.map(([k, t, get, d, dom]) => {
+  const out = h("div", { class: "bars" }, rows.map(([k, t, get, d, dom]) => {
     const v = get(A), r = refA ? get(refA) : null, R = rng[k] || [];
     if (v == null) return null;
     const lo = Math.min(dom[0], v, r ?? v), hi = Math.max(dom[1], v, r ?? v);
     const pos = (x) => (100 * (x - lo) / (hi - lo)).toFixed(1);
     const inR = (x) => (R[0] == null || x >= R[0]) && (R[1] == null || x <= R[1]);
     const dist = (x) => (R[0] != null && x < R[0] ? R[0] - x : R[1] != null && x > R[1] ? x - R[1] : 0);
-    const arrow = r == null ? "" : v > r + Math.pow(10, -d) / 2 ? "↑" : v < r - Math.pow(10, -d) / 2 ? "↓" : "=";
+    const moved = r != null && fmt(v, d) !== fmt(r, d);
     const cls = r == null ? "" : dist(v) < dist(r) - 1e-6 ? "better" : dist(v) > dist(r) + 1e-6 ? "worse" : "";
-    return h("div", { class: "bar" }, h("span", { class: "bk" }, t, tip(k === "ca_ruw" ? "cuw" : k)),
+    const why = cls === "better" ? "toward your range" : cls === "worse" ? "away from your range" : moved ? "inside your range" : "no change";
+    const a0 = +pos(Math.min(v, r ?? v)), a1 = +pos(Math.max(v, r ?? v));
+    return h("div", { class: "bar" + (r != null ? " withref" : ""), title: r != null ? `${t}: ${fmt(r, d)} to ${fmt(v, d)}, ${why}` : "" }, h("span", { class: "bk" }, t, tip(k === "ca_ruw" ? "cuw" : k)),
       h("span", { class: "track" }, (R[0] != null || R[1] != null) ? h("i", { class: "rng", style: `left:${pos(R[0] ?? lo)}%;width:${pos(R[1] ?? hi) - pos(R[0] ?? lo)}%` }) : null,
         r != null ? h("i", { class: "ref", style: `left:calc(${pos(r)}% - 1px)` }) : null,
+        moved && a1 - a0 > 1.5 ? h("i", { class: "mv " + (cls || "same") + (v < r ? " left" : ""), style: `left:${a0}%;width:${(a1 - a0).toFixed(1)}%` }) : null,
         h("i", { class: "cur " + (inR(v) ? "in" : "out"), style: `left:calc(${pos(v)}% - 2px)` })),
-      h("span", { class: "bv" }, r != null ? [fmt(r, d), " ", h("span", { class: "arw " + cls }, arrow), " "] : null, h("b", {}, fmt(v, d))));
+      h("span", { class: "bv" }, r != null ? [h("span", { class: "old" }, fmt(r, d)), h("span", { class: "arw " + cls }, moved ? (v > r ? " ▲ " : " ▼ ") : " = ")] : null, h("b", {}, fmt(v, d))));
   }));
+  if (refA) out.append(h("p", { class: "barkey" }, h("span", { class: "k ref" }, "previous"), h("span", { class: "k cur" }, "this trial"), h("span", { class: "k mvb" }, "toward range"), h("span", { class: "k mvw" }, "away from range"), h("span", { class: "k band" }, "your range")));
+  return out;
 }
 
 /* ---------- lab results */
@@ -1396,7 +1406,10 @@ function renderResults(body, side, t) {
         h("div", {}, h("span", { class: "k" }, `Air voids at ${fmt(v.pb, 1)}% Pb`), h("div", {}, e.va_pred_at_actual_pb != null ? [h("b", {}, `Predicted ${fmt(e.va_pred_at_actual_pb, 1)}`), `, measured ${fmt(v.va, 1)}. Off by ${fmt(Math.abs(e.va), 1)}.`] : "-")),
         h("div", {}, h("span", { class: "k" }, "What it means"), h("div", {}, Math.abs(e.vma) <= 0.5 ? "Inside the usual ±0.5% for the rules of thumb." : "Larger than the usual ±0.5%. After 3 tested trials, try fitting the rules of thumb in Criteria.")))));
   }
-  body.append(h("section", { class: "card" }, h("h2", {}, "Bailey values"), baileyBars(null, a), h("p", { class: "hint" }, "Green band: your range from Criteria. The tick is this trial.")));
+  const T0 = S.mix.trials || [], ti0 = T0.indexOf(t);
+  const prevT = (t.ref && anTrial(t.ref)?.ratios) ? trialById(t.ref) : T0.slice(0, ti0).reverse().find((x) => anTrial(x.id)?.ratios);
+  body.append(h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "Bailey values"), prevT ? h("span", { class: "hint" }, `${prevT.label} to ${t.label}`) : null),
+    baileyBars(prevT ? anTrial(prevT.id) : null, a), prevT ? null : h("p", { class: "hint" }, "Green band: your range from Criteria. The tick is this trial.")));
   const w = warnList(t, a, null);
   if (w) body.append(h("section", { class: "card" }, h("h2", {}, "Gradation checks"), w));
   const vt = num(tg.vma), onV = vt != null && Math.abs(v.vma - vt) <= tolVMA();
@@ -1481,6 +1494,16 @@ function renderCompare(page) {
   const col = (t) => anTrial(t.id) || {};
   const grp = (k) => h("tr", { class: "grp" }, h("th", { colspan: T.length + 2 }, k));
   const row = (k, f, target) => h("tr", {}, h("th", { class: "rowh" }, k), T.map((t) => h("td", { class: "calc" + (isTested(t.id) ? "" : " planned") }, f(t, col(t)))), h("td", { class: "calc tgt" }, target ?? ""));
+  const mvRow = (k, get, d, R, target) => h("tr", {}, h("th", { class: "rowh" }, k), T.map((t, i) => {
+    const v = get(col(t)), p = i > 0 ? get(col(T[i - 1])) : null;
+    let m = null;
+    if (v != null && p != null && fmt(v, d) !== fmt(p, d)) {
+      const dist = (x) => (R?.[0] != null && x < R[0] ? R[0] - x : R?.[1] != null && x > R[1] ? x - R[1] : 0);
+      const c = dist(v) < dist(p) - 1e-6 ? "better" : dist(v) > dist(p) + 1e-6 ? "worse" : "";
+      m = h("span", { class: "arw " + c, title: `${sgn(v - p, d)} from ${T[i - 1].label}` }, v > p ? "▲" : "▼");
+    }
+    return h("td", { class: "calc" + (isTested(t.id) ? "" : " planned") }, m, m ? " " : null, fmt(v, d));
+  }), h("td", { class: "calc tgt" }, target ?? ""));
   const slots = readySlots();
   const cps = S.mix.control_points || {};
   const keySieves = sieves().filter((s) => { const c = cps[s] || {}; return [c.min, c.max, c.soft_min, c.soft_max].some((x) => num(x) != null); });
@@ -1493,10 +1516,10 @@ function renderCompare(page) {
     row("VFA, %", (t, a) => fmt(a.volumetrics?.vfa, 1)),
     row("VCAmix, %", (t, a) => fmt(a.volumetrics?.vca_mix, 1)),
     grp("Bailey"),
-    row(typeInfo().uw_label, (t, a) => fmt(a.bailey?.cuw_pct, 1), rng.ca_ruw ? `${rng.ca_ruw[0]} to ${rng.ca_ruw[1]}` : ""),
-    row("CA ratio", (t, a) => fmt(a.ratios?.CA, 2), rng.CA?.[0] != null ? `${rng.CA[0]} to ${rng.CA[1]}` : ""),
-    row("FAc ratio", (t, a) => fmt(a.ratios?.FAc, 2), rng.FAc ? `${rng.FAc[0]} to ${rng.FAc[1]}` : ""),
-    row("FAf ratio", (t, a) => fmt(a.ratios?.FAf, 2), rng.FAf ? `${rng.FAf[0]} to ${rng.FAf[1]}` : ""),
+    mvRow(typeInfo().uw_label, (a) => a.bailey?.cuw_pct, 1, rng.ca_ruw, rng.ca_ruw ? `${rng.ca_ruw[0]} to ${rng.ca_ruw[1]}` : ""),
+    mvRow("CA ratio", (a) => a.ratios?.CA, 2, rng.CA, rng.CA?.[0] != null ? `${rng.CA[0]} to ${rng.CA[1]}` : ""),
+    mvRow("FAc ratio", (a) => a.ratios?.FAc, 2, rng.FAc, rng.FAc ? `${rng.FAc[0]} to ${rng.FAc[1]}` : ""),
+    mvRow("FAf ratio", (a) => a.ratios?.FAf, 2, rng.FAf, rng.FAf ? `${rng.FAf[0]} to ${rng.FAf[1]}` : ""),
     keySieves.length ? grp("Gradation, % passing") : null,
     ...keySieves.map((s) => { const c = cps[s]; const lim = [c.min != null ? `${c.min} to ${c.max}` : "", c.soft_min != null ? `soft ${c.soft_min} to ${c.soft_max}` : ""].filter(Boolean).join(", ");
       return row(`${lab(s)[0]} (${lab(s)[1]})`, (t, a) => fmt(a.gradation?.[+s] ?? a.gradation?.[s], 1), lim); })];
@@ -1548,7 +1571,7 @@ function trendCard(title, key, target) {
   const Y = (v) => Tp + (hi - v) / (hi - lo) * (H - Tp - B);
   let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">`;
   for (let v = lo; v <= hi; v += (hi - lo > 6 ? 2 : 1)) s += `<line class="gl" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text class="ax" x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`;
-  if (target != null) s += `<line class="tgt" x1="${L}" x2="${W - R}" y1="${Y(target)}" y2="${Y(target)}"/><text class="ax" x="${W - R}" y="${Y(target) - 5}" text-anchor="end">target ${fmt(target, 1)}</text>`;
+  if (target != null) s += `<line class="tgt" x1="${L}" x2="${W - R}" y1="${Y(target)}" y2="${Y(target)}"/><text class="ax" x="${L + 4}" y="${Y(target) - 5}" text-anchor="start">target ${fmt(target, 1)}</text>`;
   const real = pts.map((p, i) => [X(i), Y(p.v), p]);
   const solid = real.filter((r) => !r[2].pred);
   if (solid.length > 1) s += `<polyline class="tl" points="${solid.map((r) => r[0] + "," + r[1]).join(" ")}"/>`;
@@ -1563,7 +1586,7 @@ function renderReference() {
   const M = S.meta, ty = M.types;
   const wrap = h("div", { class: "reference" });
   wrap.append(h("div", { class: "row" }, h("h1", {}, "Bailey reference"), h("span", { class: "spacer" }), S.mix ? h("button", { class: "btn", onclick: () => { S.tab = "criteria"; render(); } }, "Back to my mix") : h("button", { class: "btn", onclick: home }, "Back to my mixes")),
-    h("p", { class: "intro" }, "Typical values for each mix type, from W.J. Pine's course The Bailey Method: Achieving Volumetrics and HMA Compactability (2023). Where they differ from TRB E-C044 (2002), these are used. They load as your starting values when you pick a mix type and NMAS in Criteria. After 3 tested trials, the tool can fit the rules of thumb to your own mix."));
+    h("p", { class: "intro" }, "Typical values for each mix type, from W.J. Pine, The Bailey Method: Achieving Volumetrics and HMA Compactability. Where they differ from TRB E-C044 (2002), these are used. They load as your starting values when you pick a mix type and NMAS in Criteria. After 3 tested trials, the tool can fit the rules of thumb to your own mix."));
   const k3 = ["sma", "cg", "fg"];
   const rows = [
     ["Unit weights"],
@@ -1604,10 +1627,7 @@ function renderReference() {
       h("li", {}, "A Gsb or Gmb change of 0.015 alone moves VMA by about 0.5%."),
       h("li", {}, "After 3 or more tested trials, the tool can fit the factors to your own results, within the ranges above."))),
     h("section", { class: "card" }, h("h2", {}, "References"),
-      h("ul", { class: "plain" },
-        h("li", {}, "Pine, W.J. ", h("i", {}, "The Bailey Method: Achieving Volumetrics and HMA Compactability."), " Course manual, 2023 class. The typical values on this page come from this course."),
-        h("li", {}, "Vavrik, W.R., Huber, G., Pine, W.J., Carpenter, S.H., and Bailey, R. (2002). ",
-          h("a", { href: "https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf", target: "_blank", rel: "noopener" }, h("i", {}, "Bailey Method for Gradation Selection in HMA Mixture Design")), ". Transportation Research Circular E-C044, Transportation Research Board."))));
+      refList()));
   return wrap;
 }
 
@@ -1624,14 +1644,20 @@ function chartCard(series, nmas, noTable) {
   const cps = S.mix?.control_points || {};
   const tg = h("button", { class: "btn link", onclick: () => { S.chartBasis = S.chartBasis === "mass" ? "volume" : "mass"; if (S.refresh) S.refresh(); else render(); } }, S.chartBasis === "mass" ? "By volume" : "By mass");
   return h("div", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, `Gradation, by ${S.chartBasis}`), h("span", { class: "row" }, scaleToggle(), tg)),
-    chartBox(gradChart({ series, nmas, cps }), series, true), noTable ? null : gradTable(series.slice().reverse(), cps),
+    chartBox(gradChart({ series, nmas, cps }), series, true, { nmas, cps }), noTable ? null : gradTable(series.slice().reverse(), cps),
     nmas && S.an?.control ? h("p", { class: "caption" }, `${nmas} mm NMAS. Control sieves ${[S.an.control.half, S.an.control.pcs, S.an.control.scs, S.an.control.tcs].filter((x) => x != null).join(", ")} mm. The shaded side is the coarse fraction.`) : null);
 }
-function gradChart({ series, nmas, cps, compact }) {
-  const W = 580, H = compact ? 300 : 390, L = 46, R = 16, T = compact ? 16 : 32, B = 46;
+function gradChart({ series, nmas, cps, compact, big }) {
+  const W = big ? 1180 : 580, L = big ? 150 : 46, R = big ? 28 : 16, T = compact ? 16 : 32, B = 46;
+  const PH = big ? 430 : (compact ? 300 : 390) - T - B;
   const keys = sieves(), sv = keys.map(Number), n = sv.length;
   const pw = (d) => Math.pow(d, 0.45);
-  const PL = L, PR = W - R, PT = T, PB = H - B;
+  const PL = L, PR = W - R, PT = T, PB = T + PH;
+  const p45 = S.xScale !== "even";
+  const nrows = big ? numRows(series, cps) : [];
+  const RH = 24, HEAD = p45 ? 112 : 50;
+  const H = PB + B + (big && nrows.length ? HEAD - B + nrows.length * RH + 14 : 0);
+  const colX = (i) => PR - (PR - PL) / n / 2 - i * (PR - PL) / n;
   let X;
   if (S.xScale === "even") {
     const step = (PR - PL) / n;
@@ -1709,21 +1735,83 @@ function gradChart({ series, nmas, cps, compact }) {
     s += `<polyline class="series ${ser.cls || ""}" style="stroke:${ser.color}" points="${pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ")}"/>`;
     if (ser.cls !== "old") pts.forEach((p) => (s += `<circle class="dot" cx="${p[0]}" cy="${p[1]}" r="${ser.cls === "pile" ? 2.6 : 3.3}" style="fill:${ser.color}"><title>${esc(ser.name)}: ${lab(p[2])[0]} (${esc(lab(p[2])[1])}) ${fmt(p[3], 1)}%</title></circle>`));
   });
+  if (big && nrows.length) {
+    s += `<g class="nums">`;
+    const y0 = PB + HEAD;
+    keys.forEach((k, i) => {
+      const cx = colX(i);
+      if (p45) {
+        const crowd = sv[i] < 1.18 && (i % 2 === 1);
+        s += `<path class="conn" d="M${X(sv[i])},${PB + (crowd ? 62 : 42)} C${X(sv[i])},${PB + 70} ${cx},${PB + 62} ${cx},${PB + 76}"/>`;
+        const lb = lab(k);
+        s += `<text class="hmm" x="${cx}" y="${PB + 90}" text-anchor="middle">${lb[0].replace(" mm", "")}</text><text class="hus" x="${cx}" y="${PB + 102}" text-anchor="middle">${esc(lb[1])}</text>`;
+      } else s += `<line class="guide" x1="${cx}" x2="${cx}" y1="${PB + 32}" y2="${y0 + nrows.length * RH - 4}"/>`;
+    });
+    nrows.forEach((r, j) => {
+      const y = y0 + j * RH;
+      s += `<line class="sep" x1="${12}" x2="${PR}" y1="${y - 2}" y2="${y - 2}"/>`;
+      if (r.color) s += `<rect x="12" y="${y + 6}" width="10" height="10" rx="2" style="fill:${r.color}"/>`;
+      s += `<text class="nlab${r.lim ? " lim" : ""}" x="${r.color ? 28 : 12}" y="${y + 15}">${esc(r.name.length > 17 ? r.name.slice(0, 16) + "…" : r.name)}</text>`;
+      keys.forEach((k, i) => { const c = r.cells[i]; if (!c) return; s += `<text class="nv ${c.c}" x="${colX(i)}" y="${y + 15}" text-anchor="middle"${r.color && r.cls !== "old" && !c.c ? ` style="fill:${r.color}"` : ""}>${c.t}</text>`; });
+    });
+    s += `</g>`;
+  }
   return s + `</svg>`;
 }
-function chartBox(svg, series, legend) {
-  const box = h("div", { class: "chart", html: svg });
+function numRows(series, cps) {
+  const keys = sieves();
+  const lim = (k) => { const v = (cps || {})[k] || {}; return { lo: num(v.min), hi: num(v.max), slo: num(v.soft_min), shi: num(v.soft_max) }; };
+  const rows = series.slice().reverse().filter((r) => r.grad).map((r) => ({ name: r.name, color: r.color, cls: r.cls, cells: keys.map((k) => {
+    const v = num(r.grad[k] ?? r.grad[+k]); if (v == null) return null;
+    const L = lim(k); let c = "";
+    if (cps && r.cls !== "pile") {
+      if ((L.lo != null && v < L.lo - 1e-9) || (L.hi != null && v > L.hi + 1e-9)) c = "out";
+      else if ((L.slo != null && v < L.slo - 1e-9) || (L.shi != null && v > L.shi + 1e-9)) c = "softout";
+    }
+    return { t: fmt(v, 1), c };
+  }) }));
+  const rr = (a, b) => (a == null && b == null ? null : { t: `${a ?? ""}–${b ?? ""}`, c: "" });
+  if (keys.some((k) => lim(k).lo != null || lim(k).hi != null)) rows.push({ name: "Control points", lim: true, cells: keys.map((k) => rr(lim(k).lo, lim(k).hi)) });
+  if (keys.some((k) => lim(k).slo != null || lim(k).shi != null)) rows.push({ name: "Soft targets", lim: true, cells: keys.map((k) => rr(lim(k).slo, lim(k).shi)) });
+  return rows;
+}
+function enlargeChart(series, opts) {
+  const old = $("#bigchart"); if (old) old.remove();
+  const close = () => { ov.remove(); document.removeEventListener("keydown", esc1); };
+  const esc1 = (e) => { if (e.key === "Escape") close(); };
+  const ov = h("div", { class: "overlay", id: "bigchart", onclick: (e) => { if (e.target === ov) close(); } });
+  const draw = () => {
+    ov.innerHTML = "";
+    const tg = h("button", { class: "btn link", onclick: () => { S.xScale = S.xScale === "even" ? "p45" : "even"; try { localStorage.setItem("bailey.xscale", S.xScale); } catch (e) { /* ignore */ } draw(); if (S.refresh) S.refresh(); } }, S.xScale === "even" ? "0.45 power axis" : "Even sieve spacing");
+    const tbl = gradTable(series.slice().reverse(), opts.cps);
+    tbl.style.display = "none";
+    const id = tbl.querySelector("table")?.id;
+    ov.append(h("div", { class: "bigcard", role: "dialog", "aria-modal": "true", "aria-label": "Gradation chart, enlarged" },
+      h("div", { class: "cardhead" }, h("h2", {}, `Gradation, by ${S.chartBasis || "mass"}`),
+        h("span", { class: "row" }, tg, id ? h("button", { class: "btn link", onclick: () => copyGrid("#" + id) }, "Copy values for Excel") : null, h("button", { class: "btn small", onclick: close, "aria-label": "Close" }, "Close ✕"))),
+      chartBox(gradChart({ series, nmas: opts.nmas, cps: opts.cps, big: true }), series, true),
+      tbl,
+      h("p", { class: "caption" }, S.xScale === "even" ? "Each column of numbers sits under its sieve." : "Lines link each sieve on the 0.45 power axis to its column of numbers.", " Red: outside a control point. Underlined: outside a soft target. Press Esc to close.")));
+  };
+  draw();
+  document.body.append(ov);
+  document.addEventListener("keydown", esc1);
+}
+function chartBox(svg, series, legend, opts) {
+  const box = h("div", { class: "chart" + (opts ? " zoomable" : ""), html: svg, title: opts ? "Click to enlarge" : null });
+  if (opts) box.addEventListener("click", (e) => { if (e.target.closest("button,a")) return; enlargeChart(series, opts); });
   const hasCp = Object.values(S.mix?.control_points || {}).some((v) => v && (num(v.min) != null || num(v.max) != null));
   const hasSoft = Object.values(S.mix?.control_points || {}).some((v) => v && (num(v.soft_min) != null || num(v.soft_max) != null));
   const items = legend ? series.filter((s) => s.cls !== "old").concat(series.filter((s) => s.cls === "old").slice(-3)) : series;
   box.append(h("div", { class: "legend" }, items.map((s) => h("span", { class: s.cls === "prop" ? "dash" : "" }, h("i", { style: `color:${s.color}` }), s.name)),
     legend && S.an?.nmas ? h("span", { class: "dash" }, h("i", { style: "color:#6B7780" }), "max density") : null,
     legend && hasCp ? h("span", { class: "bandkey" }, h("i"), "control points") : null,
-    legend && hasSoft ? h("span", { class: "softkey" }, h("i"), "soft targets") : null));
+    legend && hasSoft ? h("span", { class: "softkey" }, h("i"), "soft targets") : null,
+    opts ? h("button", { class: "btn link enl", onclick: () => enlargeChart(series, opts) }, "⤢ Enlarge with numbers") : null));
   return box;
 }
 function gradTable(series, cps) {
-  const keys = sieves();
+  const keys = sieves().slice().reverse();
   const lim = (k) => { const v = (cps || {})[k] || {}; return { lo: num(v.min), hi: num(v.max), slo: num(v.soft_min), shi: num(v.soft_max) }; };
   const rng = (a, b) => (a == null && b == null ? "" : `${a ?? ""}-${b ?? ""}`);
   const hasCp = cps && keys.some((k) => lim(k).lo != null || lim(k).hi != null);

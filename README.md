@@ -31,7 +31,7 @@ A **Bailey reference** page lists the typical values for every mix type.
 - Predicted VMA = VMA of a tested trial plus terms for the change in % passing PCS and in the CA, FAc and FAf ratios, with the factors for the mix type.
 - Change in air voids = change in VMA + change in effective binder × 2.25.
 
-Typical values come from W.J. Pine's course *The Bailey Method: Achieving Volumetrics and HMA Compactability* (2023 class), which takes priority over E-C044 where they differ.
+Typical values come from W.J. Pine, *The Bailey Method: Achieving Volumetrics and HMA Compactability*, which takes priority over E-C044 where they differ.
 
 **Predictions use rules of thumb and are estimates only. Confirm every trial in the lab.**
 
@@ -62,7 +62,7 @@ Developed by Akash Bajaj, Illinois Center for Transportation, University of Illi
 
 References:
 
-- Pine, W.J. *The Bailey Method: Achieving Volumetrics and HMA Compactability.* Course manual, 2023 class. Source of the typical values.
+- Pine, W.J. *The Bailey Method: Achieving Volumetrics and HMA Compactability.*
 - Vavrik, W.R., Huber, G., Pine, W.J., Carpenter, S.H., and Bailey, R. (2002). *Bailey Method for Gradation Selection in HMA Mixture Design.* Transportation Research Circular E-C044, Transportation Research Board. https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf
 
 This is an independent tool. It is not endorsed by any agency or by any Bailey Method course.
