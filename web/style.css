@@ -24,16 +24,21 @@ h2 { font: 700 19px/1.2 var(--display); color: var(--navy); margin: 0 0 6px; }
 .grow { flex: 1; }
 
 /* top bar */
-.topbar { display: flex; align-items: center; gap: 16px; height: 56px; padding: 0 24px; background: var(--navy); color: #FFF; position: sticky; top: 0; z-index: 20; }
-.brand { display: flex; align-items: center; gap: 10px; background: none; border: 0; color: #FFF; cursor: pointer; font: 700 19px var(--display); padding: 0; }
-.brand svg { width: 34px; height: 20px; }
-.brand svg path { stroke: var(--orange); stroke-width: 3; fill: none; }
-.brand svg circle { fill: #FFF; }
+.topbar { display: flex; align-items: center; gap: 16px; height: 60px; padding: 0 24px; background: var(--navy); color: #FFF; position: sticky; top: 0; z-index: 20; }
+.brand { display: flex; align-items: center; gap: 10px; background: none; border: 0; color: #FFF; cursor: pointer; font: 800 19px var(--display); letter-spacing: .02em; text-transform: uppercase; padding: 0; }
+.brand svg { width: 30px; height: 30px; display: block; }
+.brand .bicon { display: inline-flex; }
+.brand > span:last-child { white-space: nowrap; }
+/* with a mix open the bar is busy: keep the badge, drop its words on narrower screens */
+@media (max-width: 1440px) { .topbar.withmix .topnote { padding: 6px; } .topbar.withmix .topnote span { display: none; } .topbar.withmix .mixname { max-width: 240px; } }
 .topbar .sep { width: 1px; height: 24px; background: #2E4466; }
 .topbar .mixname { font: 700 18px var(--display); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar .chips { display: flex; gap: 8px; }
 .topbar .chip { font-size: 13px; padding: 3px 10px; border: 1px solid #3C557A; border-radius: 4px; white-space: nowrap; }
-.toplink { background: none; border: 0; color: #FFF; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font-size: 14px; }
+.toplink { background: none; border: 0; border-bottom: 2px solid transparent; color: #FFF; cursor: pointer; font: 600 14px var(--sans); padding: 6px 2px; white-space: nowrap; }
+.toplink:hover { border-bottom-color: var(--orange); }
+.topnote { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 10px; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; background: rgba(255,255,255,.07); color: #FFF; font: 500 13px var(--sans); letter-spacing: .01em; white-space: nowrap; }
+.topnote svg { width: 18px; height: 18px; color: var(--navy-soft); }
 .savestate { font-size: 13px; color: #C9D3E0; min-width: 90px; text-align: right; }
 
 /* step tabs */

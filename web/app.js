@@ -367,11 +367,14 @@ async function boot() {
 }
 
 /* ---------------------------------------------------------------- top bar and tabs */
+// header shared with the Cracking Test Analyzer: same size, icon frame and badge
+const BRAND_ICON = '<rect width="32" height="32" rx="6" fill="#FFFFFF" fill-opacity="0.12"/><path d="M5 25 C12 24 16 11 27 7" stroke="#FF5F05" stroke-width="2.6" fill="none" stroke-linecap="round"/><circle cx="15.2" cy="16" r="2.2" fill="#FFFFFF"/>';
+const RUNS_BADGE = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="3.5" width="16" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2 7.5h16" stroke="currentColor" stroke-width="1.5"/><circle cx="4.8" cy="5.5" r=".8" fill="#FF5F05"/><circle cx="7.2" cy="5.5" r=".8" fill="currentColor"/><path d="M7 12.2l2 1.8 4-4" fill="none" stroke="#FF5F05" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function updateTopbar() {
   const bar = $("#topbar"); if (!bar) return;
   bar.innerHTML = "";
   bar.append(h("button", { class: "brand", title: "All mixes", onclick: () => { if (S.mix) save(); home(); } },
-    h("svg", { viewBox: "0 0 40 24", "aria-hidden": "true", html: '<path d="M2 21 C12 20 18 6 38 3"/><circle cx="15" cy="13.6" r="2.4"/>' }), h("span", {}, "Bailey Design Trials")));
+    h("span", { class: "bicon", "aria-hidden": "true", html: `<svg viewBox="0 0 32 32">${BRAND_ICON}</svg>` }), h("span", {}, "Bailey Design Trials")));
   if (S.mix) {
     const tg = S.mix.targets || {};
     bar.append(h("span", { class: "sep" }), h("span", { class: "mixname" }, S.mix.name || "Untitled mix"),
@@ -383,6 +386,8 @@ function updateTopbar() {
   bar.append(h("span", { class: "spacer" }),
     h("button", { class: "toplink", onclick: () => { S.tab = "reference"; S.mix ? render() : renderReferencePage(); } }, "Bailey reference"));
   if (S.mix) bar.append(h("span", { class: "savestate", id: "savestate", "aria-live": "polite" }), h("button", { class: "btn small ghost", onclick: saveNow, title: "Save now (Ctrl+S)" }, "Save"));
+  bar.append(h("span", { class: "topnote", title: "Runs in your browser", html: RUNS_BADGE + "<span>Runs in your browser</span>" }));
+  bar.classList.toggle("withmix", !!S.mix);
 }
 const TABS = [["stockpiles", "Stockpiles"], ["criteria", "Criteria"], ["trials", "Trials"], ["compare", "Compare"]];
 function tabNote(k) {
