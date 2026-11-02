@@ -481,13 +481,6 @@ function refList() {
       h("a", { href: "https://onlinepubs.trb.org/onlinepubs/circulars/ec044.pdf", target: "_blank", rel: "noopener" }, h("i", {}, "Bailey Method for Gradation Selection in HMA Mixture Design")),
       ". Transportation Research Circular E-C044, Transportation Research Board."));
 }
-function aboutBlock() {
-  return h("footer", { class: "about" },
-    h("p", {}, h("b", {}, "Bailey Design Trials. "), "Developed by Akash Bajaj, University of Illinois Urbana-Champaign. ",
-      h("a", { href: "https://github.com/100akash/bailey-design-trials", target: "_blank", rel: "noopener" }, "Source code and instructions"), "."),
-    h("p", {}, "Cite as: Bajaj, A. (2026). ", h("i", {}, "Bailey Design Trials"), " (Version 0.1). akashto.com/bailey-design-trials"),
-    h("p", { class: "disclaimer" }, "Predictions use rules of thumb and are estimates only. Confirm every trial in the lab. This is an independent tool. It is not endorsed by any agency or by any Bailey Method course."));
-}
 async function home() {
   S.mix = null; S.file = null; S.an = null; S.live = {}; S.sugg = {}; S.addedSlots = {}; S.refresh = null;
   updateTopbar();
@@ -527,7 +520,7 @@ async function home() {
       h("p", { class: "hint", style: "margin-top:16px" }, S.meta.web
         ? "Your mixes are saved in this browser only. Nothing is uploaded. Use Download mix file now and then to keep a copy or to share it."
         : `Mixes are saved as files in ${S.meta.mixes_folder}.`)),
-    S.meta.web ? aboutBlock() : null));
+    null));
   nameIn.focus();
 }
 function renderReferencePage() {
