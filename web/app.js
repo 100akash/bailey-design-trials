@@ -483,9 +483,9 @@ function refList() {
 }
 function aboutBlock() {
   return h("footer", { class: "about" },
-    h("p", {}, h("b", {}, "Bailey Design Trials. "), "Developed by Akash Bajaj, Illinois Center for Transportation, University of Illinois Urbana-Champaign. ",
+    h("p", {}, h("b", {}, "Bailey Design Trials. "), "Developed by Akash Bajaj, University of Illinois Urbana-Champaign. ",
       h("a", { href: "https://github.com/100akash/bailey-design-trials", target: "_blank", rel: "noopener" }, "Source code and instructions"), "."),
-    h("p", { class: "reflbl" }, "References"), refList(),
+    h("p", {}, "Cite as: Bajaj, A. (2026). ", h("i", {}, "Bailey Design Trials"), " (Version 0.1). akashto.com/bailey-design-trials"),
     h("p", { class: "disclaimer" }, "Predictions use rules of thumb and are estimates only. Confirm every trial in the lab. This is an independent tool. It is not endorsed by any agency or by any Bailey Method course."));
 }
 async function home() {

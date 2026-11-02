@@ -58,9 +58,13 @@ It needs Python 3.8 or newer and nothing else.
 | `mixes/` | A synthetic example mix |
 | `tests/test_engine.py` | Engine checks: `python tests/test_engine.py` |
 
+## Cite
+
+Bajaj, A. (2026). *Bailey Design Trials* (Version 0.1). https://akashto.com/bailey-design-trials/
+
 ## Credits
 
-Developed by Akash Bajaj, Illinois Center for Transportation, University of Illinois Urbana-Champaign.
+Developed by Akash Bajaj, University of Illinois Urbana-Champaign.
 
 References:
 
