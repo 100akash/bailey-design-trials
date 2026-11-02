@@ -11,7 +11,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 var(--sans); }
-body { min-width: 1180px; }
+body { min-width: 0; }
 button { font: inherit; }
 a { color: var(--navy); }
 h1 { font: 800 34px/1.1 var(--display); color: var(--navy); margin: 0 0 4px; }
@@ -486,3 +486,67 @@ body { min-height: 100vh; display: flex; flex-direction: column; }
 .reflink { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 10px; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; background: rgba(255,255,255,.07); color: #FFF; font: 500 13px var(--sans); letter-spacing: .01em; white-space: nowrap; text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s; }
 .reflink svg { width: 18px; height: 18px; color: var(--navy-soft); }
 .reflink:hover, .reflink[aria-current] { border-color: var(--orange); background: rgba(255,95,5,.14); }
+
+/* Tablet: drop the fixed desktop width. The Next panel moves under the trial. */
+@media (max-width: 1180px) {
+  .topbar .chips { display: none; }
+  .tabs { overflow-x: auto; scrollbar-width: none; }
+  .tab { white-space: nowrap; flex: 0 0 auto; padding-left: 12px; padding-right: 12px; }
+  .page.two { grid-template-columns: minmax(0, 1fr); }
+  .page.two > .side { position: static; max-height: none; overflow: visible; }
+  .page.three { grid-template-columns: 220px minmax(0, 1fr); }
+  .page.three > .side { grid-column: 2; position: static; max-height: none; overflow: visible; padding: 0 28px 48px; }
+  .page.three > .main { padding-bottom: 20px; }
+  .home { grid-template-columns: minmax(0, 1fr); }
+  .faasum { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  table.grid:not(.gridwrap > table) { display: block; max-width: 100%; overflow-x: auto; }
+}
+
+/* Phone: one column, compact header, wide tables scroll inside their box. */
+@media (max-width: 760px) {
+  html, body { font-size: 14.5px; }
+  h1 { font-size: 27px; }
+  .topbar { padding: 0 12px; gap: 10px; }
+  .brand { font-size: 16px; }
+  .topbar.withmix .brand > span:last-child, .topbar .sep, .topbar .savestate, .topbar .topnote { display: none; }
+  .topbar .mixname { font-size: 16px; max-width: none; min-width: 0; flex: 1; }
+  .topbar.withmix .spacer { display: none; }
+  .reflink { padding: 6px; } .reflink span { display: none; }
+  .tabs { padding: 0 8px; overflow-x: auto; scrollbar-width: none; }
+  .tab { padding: 11px 10px 8px; white-space: nowrap; flex: 0 0 auto; }
+  .tabs { gap: 0; justify-content: space-between; }
+  .tab { padding: 11px 4px 8px; gap: 5px; }
+  .tab .tt { font-size: 14.5px; }
+  .tab .tn { display: none; }
+  .guide { flex-wrap: wrap; padding: 10px 14px; gap: 8px 10px; }
+  .guide .gt { flex: 1 1 220px; }
+  .guide .btn { margin-left: auto; }
+  .banner { flex-wrap: wrap; }
+  .banner .grow { flex: 1 1 100%; }
+  .page { padding: 16px 14px 40px; }
+  .page.three { display: flex; flex-direction: column; align-items: stretch; }
+  .page.three > * { width: 100%; min-width: 0; }
+  .page.three > .main { padding: 16px 14px 16px; }
+  .page.three > .side { padding: 0 14px 40px; }
+  .rail, .page.three > .rail { position: static; min-height: 0; max-height: none; border-right: 0; border-bottom: 1px solid var(--rule); padding: 14px; }
+  .railtools { margin-top: 6px; padding-top: 6px; flex-direction: row; flex-wrap: wrap; gap: 4px 14px; }
+  .head { flex-wrap: wrap; align-items: flex-start; }
+  .head .row { justify-content: flex-start; }
+  .cols2, .below, .bigrid, .splits, .card.binder, .home { grid-template-columns: minmax(0, 1fr); }
+  .fgrid.three, .fgrid.four, .fgrid.five, .kpis, .kpis.four, .terms, .faasum, .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card { padding: 14px; }
+  .next { flex-direction: column; align-items: stretch; padding: 14px; }
+  .next .col { min-width: 0; }
+  .trialhead input.tname { font-size: 26px; }
+  .bar { grid-template-columns: 70px minmax(0, 1fr) 100px; gap: 8px; }
+  .chart { overflow-x: auto; }
+  .card, .gridwrap, .reference > * { min-width: 0; max-width: 100%; }
+  table.ref .rowh { width: 34%; }
+  .reference { padding: 18px 14px 40px; }
+  .home { padding: 24px 16px 40px; gap: 24px; }
+  .home h1 { font-size: 32px; }
+  .ledger-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+  .ledger-row .count { display: none; }
+  .sitefoot { padding: 12px 14px; }
+  .sitefoot .links { white-space: normal; }
+}
