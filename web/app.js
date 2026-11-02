@@ -9,6 +9,7 @@ const S = {
   live: {},          // live prediction per trial id
   sugg: {},          // suggestions per trial id
   addedSlots: {},    // empty stockpile columns the user added this session
+  fold: {},          // which collapsible Criteria cards are open this session
   chartBasis: "mass",
 };
 const SLOT_NAMES = { CA1: "Coarse 1", CA2: "Coarse 2", CA3: "Coarse 3", FA1: "Fine 1", FA2: "Fine 2", FA3: "Fine 3", F1: "Filler 1", F2: "Filler 2" };
@@ -21,6 +22,13 @@ const NMAS_KEYS = ["37.5", "25.0", "19.0", "12.5", "9.5", "4.75"];
 /* ---------------------------------------------------------------- utilities */
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+// A card that starts collapsed; the first child is the header. Open state lasts for the session.
+function fold(key, head, ...body) {
+  const d = h("details", { class: "card fold", open: S.fold[key] ? true : null, ontoggle: () => { S.fold[key] = d.open; } },
+    h("summary", {}, head), h("div", { class: "foldbody" }, ...body));
+  return d;
+}
+
 function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -851,14 +859,14 @@ function renderCriteria(page) {
 
   // Bailey ranges
   const rb = h("tbody", { id: "ranges-body" });
-  left.append(h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "Bailey ranges"), h("span", { class: "hint", id: "ranges-for" })),
+  left.append(fold("ranges", h("div", { class: "cardhead" }, h("h2", {}, "Bailey ranges"), h("span", { class: "hint", id: "ranges-for" })),
     h("p", { class: "hint" }, "Soft goals for the search. A fine-graded mix uses the new CA, FAc and FAf ratios on the fine fraction."),
     h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Principle"), h("th", {}, "Min"), h("th", {}, "Max"), h("th", {}, "Typical"))), rb),
     h("div", { class: "row note" }, h("button", { class: "btn small", onclick: () => { m.bailey_ranges = null; changed({ now: true }); setTimeout(render, 350); } }, "Reset ranges to typical"))));
 
   // rules of thumb
   const rotBody = h("tbody", { id: "rot-body" });
-  left.append(h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "Rules of thumb for prediction"), h("span", { class: "hint", id: "rot-for" })),
+  left.append(fold("rot", h("div", { class: "cardhead" }, h("h2", {}, "Rules of thumb for prediction"), h("span", { class: "hint", id: "rot-for" })),
     h("p", { class: "hint" }, "How much each value must change to move VMA by 1%. The class values are used until you change them. After 3 tested trials the tool can fit them to your mix."),
     h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Factor"), h("th", {}, "In use"), h("th", {}, "Class value"), h("th", {}, "Typical range"), h("th", {}, "Fitted to your trials"))), rotBody),
     h("div", { class: "row note", id: "fit-row" })));

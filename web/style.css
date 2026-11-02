@@ -550,3 +550,13 @@ body { min-height: 100vh; display: flex; flex-direction: column; }
   .sitefoot { padding: 12px 14px; }
   .sitefoot .links { white-space: normal; }
 }
+
+/* collapsible cards (Criteria: Bailey ranges, rules of thumb) */
+details.fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary .cardhead { flex: 1; }
+details.fold > summary .cardhead h2 { margin: 0; }
+details.fold > summary::after { content: ""; width: 9px; height: 9px; border-right: 2px solid var(--navy); border-bottom: 2px solid var(--navy); transform: rotate(45deg); margin: -4px 6px 0 0; transition: transform .15s; flex: none; }
+details.fold[open] > summary::after { transform: rotate(-135deg); margin-top: 4px; }
+details.fold > summary:hover h2 { color: var(--orange-dk, #C84113); }
+details.fold[open] > .foldbody { margin-top: 8px; }
