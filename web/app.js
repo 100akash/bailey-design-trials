@@ -149,6 +149,10 @@ const GLOSSARY = {
   phase: "Once predicted VMA is within your tolerance of the target, keep the blend and change only the binder for air voids.",
   draindown: "Binder that drains from loose mix held at production temperature (AASHTO T 305). It shows if the mix can hold its binder during storage and hauling.",
   vfa: "Voids filled with asphalt: the share of VMA filled by effective binder.",
+  soft: "Where you would like this sieve to land. The search aims for it but can go outside it. Control min and max are hard limits it never crosses.",
+  principle: "CA, FAc and FAf ratios describe how the coarse and fine parts pack. The search tries to keep each one inside your range.",
+  inuse: "The value the prediction uses now. It starts at the class value. You can type your own, or fit it to your trials after 3 tested trials.",
+  minpile: "Very small stockpile percentages are hard to feed at the plant. Any stockpile the search uses will be at least this much.",
 };
 function tip(key, text) {
   const t = text || GLOSSARY[key] || "";
@@ -853,22 +857,22 @@ function renderCriteria(page) {
 
   // volumetric targets
   const vol = [["vma", "VMA, %", "e.g. 17.0"], ["va", "Air voids, %", "e.g. 3.5"], ["pb_min", "Minimum binder, %", "optional"],
-    [["vfa", 0], "VFA min, %", "optional"], [["vfa", 1], "VFA max, %", "optional"], ["vcadrc", "VCA dry-rodded, %", "once measured"], ["vma_tol", "Tune binder once VMA is within ±", "0.3"]];
+    [["vfa", 0], "VFA min, %", "optional"], [["vfa", 1], "VFA max, %", "optional"], ["vcadrc", "VCA dry-rodded, %", "once measured", "vca"], ["vma_tol", "Tune binder once VMA is within ±", "0.3", "phase"]];
   left.append(h("section", { class: "card" }, h("h2", {}, "Volumetric targets"), h("p", { class: "hint", id: "vma-hint" }, "The search aims for VMA. Binder is then set for the air voids."),
-    h("div", { class: "fgrid three" }, vol.map(([k, t, ph]) => h("label", { class: "f" }, h("span", {}, t), numInput(["targets"].concat(k), { placeholder: ph }))))));
+    h("div", { class: "fgrid three" }, vol.map(([k, t, ph, g]) => h("label", { class: "f" }, h("span", {}, t, g ? tip(g) : null), numInput(["targets"].concat(k), { placeholder: ph }))))));
 
   // Bailey ranges
   const rb = h("tbody", { id: "ranges-body" });
   left.append(fold("ranges", h("div", { class: "cardhead" }, h("h2", {}, "Bailey ranges"), h("span", { class: "hint", id: "ranges-for" })),
     h("p", { class: "hint" }, "Soft goals for the search. A fine-graded mix uses the new CA, FAc and FAf ratios on the fine fraction."),
-    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Principle"), h("th", {}, "Min"), h("th", {}, "Max"), h("th", {}, "Typical"))), rb),
+    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Principle", tip("principle")), h("th", {}, "Min"), h("th", {}, "Max"), h("th", {}, "Typical"))), rb),
     h("div", { class: "row note" }, h("button", { class: "btn small", onclick: () => { m.bailey_ranges = null; changed({ now: true }); setTimeout(render, 350); } }, "Reset ranges to typical"))));
 
   // rules of thumb
   const rotBody = h("tbody", { id: "rot-body" });
   left.append(fold("rot", h("div", { class: "cardhead" }, h("h2", {}, "Rules of thumb for prediction"), h("span", { class: "hint", id: "rot-for" })),
     h("p", { class: "hint" }, "How much each value must change to move VMA by 1%. The class values are used until you change them. After 3 tested trials the tool can fit them to your mix."),
-    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Factor"), h("th", {}, "In use"), h("th", {}, "Class value"), h("th", {}, "Typical range"), h("th", {}, "Fitted to your trials"))), rotBody),
+    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Factor"), h("th", {}, "In use", tip("inuse")), h("th", {}, "Class value"), h("th", {}, "Typical range"), h("th", {}, "Fitted to your trials"))), rotBody),
     h("div", { class: "row note", id: "fit-row" })));
 
   // gradation limits
@@ -881,14 +885,14 @@ function renderCriteria(page) {
   right.append(h("section", { class: "card" }, h("div", { class: "cardhead" }, h("h2", {}, "Gradation limits"), h("span", { id: "band-btn" })),
     h("p", { class: "hint" }, "Control points are hard limits. Soft targets are where you would like a sieve to land, for example 22 to 24% on #8."),
     h("div", { id: "cp-preview" }),
-    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Sieve"), h("th", {}, "Control min"), h("th", {}, "Control max"), h("th", { class: "softh" }, "Soft min"), h("th", { class: "softh" }, "Soft max"))), cpBody),
+    h("table", { class: "grid compact" }, h("thead", {}, h("tr", {}, h("th", { class: "rowh" }, "Sieve"), h("th", {}, "Control min"), h("th", {}, "Control max"), h("th", { class: "softh" }, "Soft min", tip("soft")), h("th", { class: "softh" }, "Soft max"))), cpBody),
     h("p", { class: "hint" }, "Paste columns straight from Excel into the first box.")));
 
   // practical limits
   const pr = practicalUI(true);
   const cb = (key, val, label) => { const i = h("input", { type: "checkbox", checked: val ? true : null }); i.addEventListener("change", () => edit(["search", key], i.checked)); return h("label", { class: "check" }, i, h("span", {}, label)); };
   right.append(h("section", { class: "card" }, h("h2", {}, "Practical limits"), h("p", { class: "hint" }, "What the plant can actually feed."),
-    h("label", { class: "check" }, h("span", {}, "A stockpile is 0% or at least"), numInput(["search", "min_pile_pct"], { cls: "tiny", label: "Minimum stockpile percent" }), h("span", {}, "%")),
+    h("label", { class: "check" }, h("span", {}, "A stockpile is 0% or at least"), numInput(["search", "min_pile_pct"], { cls: "tiny", label: "Minimum stockpile percent" }), h("span", {}, "%"), tip("minpile")),
     cb("min_fillers", pr.min_fillers, "Apply that minimum to fillers too"),
     cb("one_fine", pr.one_fine, "Prefer one fine aggregate. Two are kept only when it clearly helps."),
     cb("lock_small_fillers", pr.lock_small_fillers, "Keep fillers at 2% or less fixed unless I unlock them")),
@@ -2016,4 +2020,6 @@ boot();
   document.addEventListener("mouseover", show); document.addEventListener("focusin", show);
   document.addEventListener("mouseout", hide); document.addEventListener("focusout", hide);
   document.addEventListener("scroll", () => (box.style.display = "none"), true);
+  // a "?" inside a label: show the note instead of jumping to the input
+  document.addEventListener("click", (e) => { const t = e.target.closest?.(".tip"); if (t && t.closest("label")) { e.preventDefault(); t.focus(); } });
 })();
