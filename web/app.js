@@ -369,6 +369,7 @@ async function boot() {
 /* ---------------------------------------------------------------- top bar and tabs */
 // header shared with the Cracking Test Analyzer: same size, icon frame and badge
 const BRAND_ICON = '<rect width="32" height="32" rx="6" fill="#FFFFFF" fill-opacity="0.12"/><polygon points="15.8,13.0 19.7,16.3 18.1,19.0 14.2,18.4 13.0,15.6" fill="#FF5F05"/><polygon points="14.0,10.2 15.2,12.4 11.7,15.0 10.2,13.6 10.1,10.7 11.3,9.8" fill="#DCD8D1"/><polygon points="15.4,9.7 16.5,12.2 20.5,14.4 22.7,13.6 21.2,8.7 16.5,8.2" fill="#C2BDB5"/><polygon points="13.6,19.0 18.7,20.9 18.7,23.2 12.2,27.0 10.9,22.2" fill="#E6E3DD"/><polygon points="9.9,15.0 11.1,15.6 12.0,18.5 9.4,21.7 6.0,20.4 6.1,16.7" fill="#B4AFA7"/><polygon points="9.8,13.9 5.6,15.9 4.0,13.1 5.4,10.9 8.4,11.8" fill="#D3CFC8"/><polygon points="23.5,14.8 30.1,16.8 29.9,19.3 28.4,23.6 25.0,26.0 20.7,23.6 20.4,19.7 22.2,17.0" fill="#F3F1ED"/><polygon points="15.0,9.0 12.0,8.8 11.0,5.4 11.2,3.4 14.7,4.5 16.2,7.3" fill="#DCD8D1"/>';  // coarse aggregate skeleton
+const REF_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="3.6" height="13" rx=".8" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="7.2" y="2.5" width="3.6" height="14.5" rx=".8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M7.2 6h3.6M7.2 13.5h3.6" stroke="currentColor" stroke-width="1.2"/><rect x="12.4" y="4.6" width="3.4" height="12.8" rx=".8" transform="rotate(-14 14.1 11)" fill="none" stroke="#FF5F05" stroke-width="1.5"/><path d="M1.5 17.5h17" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 const RUNS_BADGE = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="3.5" width="16" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2 7.5h16" stroke="currentColor" stroke-width="1.5"/><circle cx="4.8" cy="5.5" r=".8" fill="#FF5F05"/><circle cx="7.2" cy="5.5" r=".8" fill="currentColor"/><path d="M7 12.2l2 1.8 4-4" fill="none" stroke="#FF5F05" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function updateTopbar() {
   const bar = $("#topbar"); if (!bar) return;
@@ -384,7 +385,7 @@ function updateTopbar() {
         h("span", { class: "chip" }, `${typeLabel()}${S.an?.nmas ? ", " + S.an.nmas + " mm" : ""}`)));
   }
   bar.append(h("span", { class: "spacer" }),
-    h("button", { class: "toplink", onclick: () => { S.tab = "reference"; S.mix ? render() : renderReferencePage(); } }, "Bailey reference"));
+    h("button", { class: "reflink", title: "Bailey reference", onclick: () => { S.tab = "reference"; S.mix ? render() : renderReferencePage(); }, html: REF_ICON + "<span>References</span>" }));
   if (S.mix) bar.append(h("span", { class: "savestate", id: "savestate", "aria-live": "polite" }), h("button", { class: "btn small ghost", onclick: saveNow, title: "Save now (Ctrl+S)" }, "Save"));
   bar.append(h("span", { class: "topnote", title: "Runs in your browser", html: RUNS_BADGE + "<span>Runs in your browser</span>" }));
   bar.classList.toggle("withmix", !!S.mix);

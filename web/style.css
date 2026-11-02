@@ -30,7 +30,7 @@ h2 { font: 700 19px/1.2 var(--display); color: var(--navy); margin: 0 0 6px; }
 .brand .bicon { display: inline-flex; }
 .brand > span:last-child { white-space: nowrap; }
 /* with a mix open the bar is busy: keep the badge, drop its words on narrower screens */
-@media (max-width: 1440px) { .topbar.withmix .topnote { padding: 6px; } .topbar.withmix .topnote span { display: none; } .topbar.withmix .mixname { max-width: 240px; } }
+@media (max-width: 1440px) { .topbar.withmix .topnote, .topbar.withmix .reflink { padding: 6px; } .topbar.withmix .topnote span, .topbar.withmix .reflink span { display: none; } .topbar.withmix .mixname { max-width: 240px; } }
 .topbar .sep { width: 1px; height: 24px; background: #2E4466; }
 .topbar .mixname { font: 700 18px var(--display); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar .chips { display: flex; gap: 8px; }
@@ -481,3 +481,8 @@ table.cmp .arw { font-size: 11px; }
 .sitefoot .links { color: var(--muted2); white-space: nowrap; }
 .sitefoot .links a { color: var(--muted2); }
 body { min-height: 100vh; display: flex; flex-direction: column; }
+
+/* References pill, same as the Runs in your browser badge, in both tools */
+.reflink { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 10px; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; background: rgba(255,255,255,.07); color: #FFF; font: 500 13px var(--sans); letter-spacing: .01em; white-space: nowrap; text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s; }
+.reflink svg { width: 18px; height: 18px; color: var(--navy-soft); }
+.reflink:hover, .reflink[aria-current] { border-color: var(--orange); background: rgba(255,95,5,.14); }
