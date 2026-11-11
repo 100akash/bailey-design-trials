@@ -88,6 +88,14 @@ function topSieve() {
 const sieves = () => allSieves().filter((s) => +s <= topSieve() + 1e-9);
 const lab = (s) => S.meta.labels[s] || [s + " mm", ""];
 const matName = (slot) => (S.mix.materials[slot]?.name || "").trim() || SLOT_NAMES[slot];
+const VCA_BREAK_AASHTO = { 37.5: 4.75, 25: 4.75, 19: 4.75, 12.5: 4.75, 9.5: 2.36, 4.75: 1.18 };
+function vcaSieveName(v) { if (v == null) return "-"; const k = allSieves().find((x) => Math.abs(+x - +v) < 1e-9); return k ? `${lab(k)[0].replace(" mm", "")} mm (${lab(k)[1]})` : `${v} mm`; }
+function vcaSieve() {
+  const v = S.mix?.settings?.vca_sieve || "pcs", n = S.an?.nmas, pcs = S.an?.control?.coarse_pcs;
+  if (v === "aashto") return VCA_BREAK_AASHTO[n] ?? pcs;
+  if (v !== "pcs" && num(v) != null) return num(v);
+  return pcs;
+}
 const readySlots = () => S.meta.slots.filter((s) => { const m = S.mix.materials[s]; return m && (m.name || "").trim() && num(m.gsb); });
 const usedSlots = () => S.meta.slots.filter((s) => (S.mix.materials[s]?.name || "").trim() || S.addedSlots[s]);
 function normType(t) { t = String(t || "sma").toLowerCase(); return ["sma", "cg", "fg", "dense"].includes(t) ? t : "sma"; }
@@ -143,7 +151,8 @@ const GLOSSARY = {
   pbe: "Effective binder: binder left to coat the aggregate. Pb minus the absorbed part.",
   vbe: "Volume of effective binder in the mix, VMA minus air voids.",
   gse: "Effective specific gravity of the aggregate, from Gmm and Pb. It sits between Gsb and the apparent gravity.",
-  gca: "Bulk specific gravity of the coarse fraction (retained on the PCS). Used for VCAmix.",
+  gca: "Bulk specific gravity of the coarse fraction, retained on the VCA break sieve you choose in Criteria (the PCS by default). Used for VCAmix.",
+  vcabreak: "The sieve that splits coarse from fine for the VCA check. Bailey uses the PCS (2.36 mm for a 12.5 mm NMAS). AASHTO R 46 uses a break point sieve (4.75 mm for a 12.5 mm NMAS). Measure VCA dry-rodded on the material retained on the same sieve.",
   dust: "Dust proportion: % passing 0.075 mm divided by binder. AASHTO M 323 uses 0.6 to 1.2 on effective binder for dense mixes.",
   balance: "The balance pile takes up the difference when you change another pile, so the total stays at 100%.",
   phase: "Once predicted VMA is within your tolerance of the target, keep the blend and change only the binder for air voids.",
@@ -859,7 +868,8 @@ function renderCriteria(page) {
   const vol = [["vma", "VMA, %", "e.g. 17.0"], ["va", "Air voids, %", "e.g. 3.5"], ["pb_min", "Minimum binder, %", "optional"],
     [["vfa", 0], "VFA min, %", "optional"], [["vfa", 1], "VFA max, %", "optional"], ["vcadrc", "VCA dry-rodded, %", "once measured", "vca"], ["vma_tol", "Tune binder once VMA is within ±", "0.3", "phase"]];
   left.append(h("section", { class: "card" }, h("h2", {}, "Volumetric targets"), h("p", { class: "hint", id: "vma-hint" }, "The search aims for VMA. Binder is then set for the air voids."),
-    h("div", { class: "fgrid three" }, vol.map(([k, t, ph, g]) => h("label", { class: "f" }, h("span", {}, t, g ? tip(g) : null), numInput(["targets"].concat(k), { placeholder: ph }))))));
+    h("div", { class: "fgrid three" }, vol.map(([k, t, ph, g]) => h("label", { class: "f" }, h("span", {}, t, g ? tip(g) : null), numInput(["targets"].concat(k), { placeholder: ph })))),
+    vcaBreakField()));
 
   // Bailey ranges
   const rb = h("tbody", { id: "ranges-body" });
@@ -1015,6 +1025,16 @@ function specCard() {
     !fs.fits ? h("div", { class: "notice" }, `${fs.it.name} is for ${fs.it.sma ? "SMA" : "dense-graded"} mixes, but this mix is ${typeLabel()}.`) : "",
     off ? h("div", { class: "notice" }, `Your blend's NMAS matches ${fs.it.grads[det].label}, not ${fs.G.label}. Check the gradation choice.`) : "");
   return card;
+}
+function vcaBreakField() {
+  const cur = S.mix.settings.vca_sieve || "pcs", n = S.an?.nmas, pcs = S.an?.control?.coarse_pcs;
+  const sel = h("select", { "aria-label": "VCA break sieve" },
+    h("option", { value: "pcs", selected: cur === "pcs" ? true : null }, `Bailey PCS${pcs ? ", " + vcaSieveName(pcs) : ""}`),
+    h("option", { value: "aashto", selected: cur === "aashto" ? true : null }, `AASHTO R 46 break point${VCA_BREAK_AASHTO[n] ? ", " + vcaSieveName(VCA_BREAK_AASHTO[n]) : ""}`),
+    allSieves().filter((k) => +k <= 9.5 && +k >= 1.18).map((k) => h("option", { value: String(+k), selected: cur !== "pcs" && cur !== "aashto" && Math.abs(+cur - +k) < 1e-9 ? true : null }, `Other: ${vcaSieveName(k)}`)));
+  sel.addEventListener("change", () => { S.mix.settings.vca_sieve = sel.value; changed({ now: true }); setTimeout(render, 400); });
+  return h("div", { class: "vcabreak" }, h("label", { class: "f" }, h("span", {}, "VCA break sieve", tip("vcabreak")), sel),
+    h("p", { class: "hint" }, `VCAmix and the VCA check use the coarse fraction retained on ${vcaSieveName(vcaSieve())}. Measure VCA dry-rodded on the same fraction. The Bailey ratios still use the PCS.`));
 }
 async function runFit() {
   try { S.fit = await api("/api/fit", { mix: S.mix }); }
@@ -1173,7 +1193,7 @@ function renderBlend(body, side, t) {
     const seg = (on, label, fn) => h("button", { role: "radio", "aria-checked": on ? "true" : "false", class: "seg" + (on ? " on" : ""), onclick: fn }, label);
     body.append(h("div", { class: "row editby", role: "radiogroup", "aria-label": "How to edit the blend" }, h("span", {}, "Edit the blend by"),
       h("span", { class: "segs" }, seg(!isB, "Stockpile %", () => { t.mode = "mass"; changed(); render(); }),
-        seg(isB, "Bailey inputs (volume blend)", () => { t.mode = "bailey"; if (!t.bailey_inputs) t.bailey_inputs = baileyFromTrial(t); changed(); render(); runForward(t); }))));
+        seg(isB, "Bailey inputs (volume blend)", () => { t.mode = "bailey"; t.bailey_inputs = baileyFromTrial(t); changed(); render(); }))));
   }
   body.append(isB ? baileyInputsBlock(t) : massBlock(t, tested));
   body.append(binderBlock(t, tested));
@@ -1182,7 +1202,8 @@ function renderBlend(body, side, t) {
   liveUpdate(t, true);
 }
 function baileyFromTrial(t) {
-  const b = anTrial(t.id)?.bailey;
+  // back-calculate from the blend as it is now, so switching views never changes the proportions
+  const b = S.live[t.id]?.an?.bailey || anTrial(t.id)?.bailey;
   if (b && !b.error && b.cuw_pct) return { cuw: +b.cuw_pct.toFixed(1), ca_vol: Object.fromEntries(Object.entries(b.ca_vol).map(([k, v]) => [k, +v.toFixed(1)])), fa_vol: Object.fromEntries(Object.entries(b.fa_vol).map(([k, v]) => [k, +v.toFixed(1)])), dust: b.dust, f2: b.f2_pct || 0 };
   return defaultBaileyInputs();
 }
@@ -1310,7 +1331,9 @@ function baileyInputsBlock(t) {
     arr.map((s) => field(matName(s), () => bi[key][s] ?? 0, (v) => (bi[key][s] = v), 5, null)),
     h("div", { class: "n", id: "sum-" + key }, ""));
   box.append(h("div", { class: "splits" }, split(ca, "ca_vol", "Coarse piles, % by volume (total 100)"), split(fa, "fa_vol", "Fine piles, % by volume (total 100)")));
-  box.append(h("div", { class: "l", style: "margin-top:14px" }, "Resulting blend, % by mass"), h("div", { class: "chips5", id: "bi-result" }));
+  const res = h("div", { class: "chips5", id: "bi-result" });
+  readySlots().forEach((s) => res.append(h("div", { class: "chip5" }, h("i", { style: `background:${slotColor(s)}` }), h("span", {}, matName(s)), h("b", {}, fmt(num(t.pct[s]) || 0, 1)))));
+  box.append(h("div", { class: "l", style: "margin-top:14px" }, "Resulting blend, % by mass"), res);
   box.append(h("p", { class: "hint" }, "Switch to Stockpile % to fine-tune pile by pile. The blend carries over."));
   return box;
 }
@@ -1379,6 +1402,12 @@ function updatePbNote(t) {
     e.append(h("div", {}, "Starting estimate from your targets and absorption: ", h("b", {}, fmt(est.pb, 1) + "%"), ` (Pba ${fmt(est.pba, 2)} plus Pbe ${fmt(est.pbe, 2)}). `,
       num(t.results?.pb) == null ? h("button", { class: "btn link", onclick: () => { t.results.pb = +est.pb.toFixed(1); changed(); render(); } }, "Use it") : null));
   } else e.append(h("div", { class: "hint" }, "Set VMA and air-void targets in Criteria to get a binder estimate."));
+  const A = L?.an;
+  if (A && (A.gsb != null || A.abs != null)) e.append(h("div", { class: "blendprops" },
+    h("span", {}, "Combined Gsb ", h("b", {}, fmt(A.gsb, 3))),
+    h("span", {}, "Water absorption ", h("b", {}, A.abs != null ? fmt(A.abs, 2) + "%" : "-")),
+    A.gca != null ? h("span", {}, `Gca (plus ${vcaSieveName(A.vca_sieve)}) `, h("b", {}, fmt(A.gca, 3))) : null,
+    est ? h("span", {}, "Estimated Pba ", h("b", {}, fmt(est.pba, 2) + "%")) : null));
 }
 function phaseOf(vma) {
   const vt = num(S.mix.targets?.vma);
@@ -1493,7 +1522,7 @@ function renderLab(body, side, t) {
       h("label", { class: "f" }, h("span", {}, "Binder content Pb, %"), numInput(R.concat("pb"))),
       h("label", { class: "f" }, h("span", {}, "Gyrations, Ndes"), numInput(R.concat(["lab", "ndes"]), { placeholder: spec() ? `${spec().it.nd} (${spec().A.name})` : "e.g. 75" })),
       h("label", { class: "f" }, h("span", {}, "Compaction temperature, °C"), numInput(R.concat(["lab", "temp"]), { placeholder: "optional" })),
-      h("label", { class: "f" }, h("span", {}, "VCA dry-rodded, %"), numInput(R.concat("vcadrc"), { placeholder: "optional" })))));
+      h("label", { class: "f" }, h("span", {}, `VCA dry-rodded, % (plus ${vcaSieveName(vcaSieve())})`, tip("vcabreak")), numInput(R.concat("vcadrc"), { placeholder: "optional" })))));
   const sma = mixType() === "sma";
   const optCard = (h("details", { class: "card more opt", open: sma || num(t.results?.lab?.draindown) != null ? true : null },
     h("summary", {}, h("span", { class: "t" }, "Optional tests"), h("span", { class: "hint" }, sma ? "draindown, recommended for SMA" : "draindown")),
@@ -1603,9 +1632,9 @@ function moreVolumetrics(a) {
       row("Gmm, average", fmt(v.gmm, 3), x.gmm_n > 1 ? `${x.gmm_n} samples, spread ${fmt(x.gmm_spread, 3)}` : `${x.gmm_n || 0} sample`, x.gmm_spread > 0.02 ? "st-high" : ""),
       row("Gsb of the blend", fmt(x.gsb, 3), "combined bulk specific gravity"),
       row("Gse", fmt(v.gse, 3), "effective specific gravity, from Gmm and Pb", "", "gse"),
-      row("Gca", fmt(x.gca, 3), "coarse fraction, used for VCAmix", "", "gca"),
+      row("Gca", fmt(x.gca, 3), `coarse fraction retained on ${vcaSieveName(x.vca_sieve)}, used for VCAmix`, "", "gca"),
       grp("Coarse aggregate contact (VCA check)"),
-      row("VCAmix", fmt(ck.vca_mix ?? v.vca_mix, 1) + "%", ck.rule || "", "", "vca"),
+      row("VCAmix", fmt(ck.vca_mix ?? v.vca_mix, 1) + "%", `${ck.rule || ""}. Break sieve ${vcaSieveName(x.vca_sieve)}${x.vca_mode === "aashto" ? " (AASHTO R 46)" : x.vca_mode === "pcs" ? " (Bailey PCS)" : ""}.`, "", "vca"),
       row("Check", ck.ok == null ? "-" : ck.ok ? "passes" : "does not pass", ck.text || "", ck.ok == null ? "" : ck.ok ? "st-ok" : "st-high"),
       ...specRows(v, x, row, grp, dd),
       dd != null ? grp("Optional tests") : null,

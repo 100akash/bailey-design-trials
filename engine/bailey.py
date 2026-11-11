@@ -513,6 +513,24 @@ def vca_mix(gmb, pb, gca, pct_pcs):
     return xround(100 - (gmb / gca) * ((100 - pb) / 100) * (100 - pct_pcs), 2)
 
 
+# ---------------------------------------------------------------- VCA break sieve
+# AASHTO R 46 break point sieve for the coarse fraction, by NMAS (mm)
+VCA_BREAK_AASHTO = {37.5: 4.75, 25: 4.75, 19: 4.75, 12.5: 4.75, 9.5: 2.36, 4.75: 1.18}
+
+
+def vca_break(mix, nmas, cs):
+    """Sieve that splits coarse from fine for VCAmix and VCA dry-rodded.
+    settings.vca_sieve: 'pcs' (Bailey PCS, default), 'aashto' (R 46 break point) or a sieve size."""
+    v = (mix.get("settings") or {}).get("vca_sieve") or "pcs"
+    s = None
+    if v == "aashto":
+        s = VCA_BREAK_AASHTO.get(nmas)
+    elif v != "pcs":
+        x = num(v)
+        s = next((k for k in SIEVES if x is not None and abs(k - x) < 1e-9), None)
+    return (s, v if s is not None else "pcs") if s is not None else (cs["coarse_pcs"], "pcs")
+
+
 # ---------------------------------------------------------------- analysis of one blend
 def analyze_blend(mix, pct, nmas=None):
     materials = mix["materials"]
@@ -529,9 +547,13 @@ def analyze_blend(mix, pct, nmas=None):
         "gradation": grad, "gradation_volume": gradation_by_volume(materials, pct),
         "nmas_detected": nm_det, "nmas": nmas, "mix_type": mt, "control": cs, "ratios": r,
         "gsb": combined_gsb(materials, pct), "abs": combined_abs(materials, pct),
-        "gca": combined_gca(materials, pct, cs["coarse_pcs"]), "conv": conv,
+        "conv": conv,
         "sum": xround(sum((num(v) or 0) for v in pct.values()), 2),
     }
+    vs, vmode = vca_break(mix, nmas, cs)
+    out["vca_sieve"], out["vca_mode"] = vs, vmode
+    out["gca"] = combined_gca(materials, pct, vs)
+    out["pct_vca"] = r["pct_pcs"] if vmode == "pcs" else grad.get(vs)
     try:
         out["bailey"] = back_calc(materials, pct, nmas, conv, mix="sma" if mt == "sma" else "cg")
     except Exception as e:  # incomplete materials
@@ -576,7 +598,7 @@ def trial_results(mix, trial, nmas):
     gmm = mean(res.get("gmm") or [])
     vol = volumetrics(pb, gmb, gmm, a["gsb"], gb)
     if gmb and pb:
-        vol["vca_mix"] = vca_mix(gmb, pb, a["gca"], a["ratios"]["pct_pcs"])
+        vol["vca_mix"] = vca_mix(gmb, pb, a["gca"], a["pct_vca"])
     vcadrc = num((trial.get("results") or {}).get("vcadrc")) or num(mix.get("targets", {}).get("vcadrc"))
     if vcadrc and vol.get("vca_mix") is not None:
         vol["vca_ok"] = vol["vca_mix"] <= vcadrc
@@ -584,7 +606,7 @@ def trial_results(mix, trial, nmas):
     # extra volumetrics for the Results screen
     gl = [num(x) for x in (res.get("gmb") or []) if num(x)]
     ml = [num(x) for x in (res.get("gmm") or []) if num(x)]
-    ex = {"gsb": a["gsb"], "gca": a["gca"], "abs": a["abs"],
+    ex = {"gsb": a["gsb"], "gca": a["gca"], "abs": a["abs"], "vca_sieve": a["vca_sieve"], "vca_mode": a["vca_mode"],
           "gmb_n": len(gl), "gmb_spread": xround(max(gl) - min(gl), 3) if len(gl) > 1 else None,
           "gmm_n": len(ml), "gmm_spread": xround(max(ml) - min(ml), 3) if len(ml) > 1 else None}
     if vol.get("complete"):
@@ -660,7 +682,7 @@ def predict(mix, ref, new, rot=None, targets=None):
     va_same_pb = rv["va"] + dvma + ((pb_ref - rv["pba"]) - (pb_ref - pba_new)) * rot["AC"]
     gsb = new["gsb"]
     gmb = (100 - vma) * gsb / (100 - pb_rec) if gsb else None
-    vca = vca_mix(gmb, pb_rec, new["gca"], nr["pct_pcs"]) if gmb else None
+    vca = vca_mix(gmb, pb_rec, new.get("gca"), new.get("pct_vca", nr["pct_pcs"])) if gmb else None
     vfa = 100 * (vma - va) / vma if vma else None
     big = []
     if abs(nr["pct_pcs"] - rr["pct_pcs"]) > 3: big.append("PCS")

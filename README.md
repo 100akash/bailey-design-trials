@@ -24,6 +24,7 @@ The tool has four steps, in tabs across the top.
 A **Bailey reference** page lists the typical values for every mix type.
 
 - Agency requirements (optional, in Criteria): FAA AC 150/5370-10H items P-401, P-403 and P-404, or UFGS 32 12 15.13 (airfield asphalt), 32 12 15.16 (SMA) and 32 12 17.19 (fuel resistant). The gradation band, minimum VMA, design air voids and other limits load for the gradation that matches your blend, and Results checks each trial against them.
+- VCA break sieve (in Criteria): run the VCA check on the Bailey PCS (default), the AASHTO R 46 break point sieve, or another sieve. Measure VCA dry-rodded on the same fraction.
 
 ## The method in brief
 

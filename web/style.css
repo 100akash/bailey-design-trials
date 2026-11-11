@@ -560,3 +560,8 @@ details.fold > summary::after { content: ""; width: 9px; height: 9px; border-rig
 details.fold[open] > summary::after { transform: rotate(-135deg); margin-top: 4px; }
 details.fold > summary:hover h2 { color: var(--orange-dk, #C84113); }
 details.fold[open] > .foldbody { margin-top: 8px; }
+.blendprops { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule-lt); font-size: 13px; color: var(--muted); }
+.blendprops b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.vcabreak { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule-lt); display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 6px 16px; align-items: end; }
+.vcabreak .hint { margin: 0 0 8px; }
+@media (max-width: 720px) { .vcabreak { grid-template-columns: 1fr; } }
