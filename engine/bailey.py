@@ -599,7 +599,11 @@ def trial_results(mix, trial, nmas):
     vol = volumetrics(pb, gmb, gmm, a["gsb"], gb)
     if gmb and pb:
         vol["vca_mix"] = vca_mix(gmb, pb, a["gca"], a["pct_vca"])
-    vcadrc = num((trial.get("results") or {}).get("vcadrc")) or num(mix.get("targets", {}).get("vcadrc"))
+    # VCA dry-rodded from the dry-rodded unit weight of the coarse fraction (AASHTO T 19)
+    druw = num(res.get("druw"))
+    gw = 998.0 if a["conv"] > 100 else 62.3
+    vcadrc_calc = xround(100 * (a["gca"] * gw - druw) / (a["gca"] * gw), 2) if druw and a.get("gca") else None
+    vcadrc = vcadrc_calc or num(res.get("vcadrc")) or num(mix.get("targets", {}).get("vcadrc"))
     if vcadrc and vol.get("vca_mix") is not None:
         vol["vca_ok"] = vol["vca_mix"] <= vcadrc
     vol["complete"] = all(vol.get(k) is not None for k in ("vma", "va", "pba"))
@@ -607,6 +611,7 @@ def trial_results(mix, trial, nmas):
     gl = [num(x) for x in (res.get("gmb") or []) if num(x)]
     ml = [num(x) for x in (res.get("gmm") or []) if num(x)]
     ex = {"gsb": a["gsb"], "gca": a["gca"], "abs": a["abs"], "vca_sieve": a["vca_sieve"], "vca_mode": a["vca_mode"],
+          "druw": druw, "vcadrc": vcadrc, "vcadrc_from": "druw" if vcadrc_calc else ("entered" if num(res.get("vcadrc")) else ("target" if vcadrc else None)),
           "gmb_n": len(gl), "gmb_spread": xround(max(gl) - min(gl), 3) if len(gl) > 1 else None,
           "gmm_n": len(ml), "gmm_spread": xround(max(ml) - min(ml), 3) if len(ml) > 1 else None}
     if vol.get("complete"):
@@ -625,7 +630,7 @@ def trial_results(mix, trial, nmas):
             if vcadrc:
                 chk.update(limit=vcadrc, ok=vca <= vcadrc, text=f"VCAmix {vca:.1f}% vs VCA dry-rodded {vcadrc:.1f}%")
             else:
-                chk["text"] = "Enter VCA dry-rodded to check stone-on-stone contact."
+                chk["text"] = "Enter the dry-rodded unit weight (DRUW) in Lab results to check stone-on-stone contact."
         else:
             fa = (a.get("bailey") or {}).get("vol_fa")
             if fa is not None:

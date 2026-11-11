@@ -565,3 +565,8 @@ details.fold[open] > .foldbody { margin-top: 8px; }
 .vcabreak { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule-lt); display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 6px 16px; align-items: end; }
 .vcabreak .hint { margin: 0 0 8px; }
 @media (max-width: 720px) { .vcabreak { grid-template-columns: 1fr; } }
+.calcnote { display: block; margin-top: 4px; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.calcnote:empty { display: none; }
+.fgrid.labgrid { align-items: end; }
+.fgrid.labgrid .f > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+p.calcnote { margin: 8px 0 0; text-align: right; }

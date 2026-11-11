@@ -89,6 +89,7 @@ const sieves = () => allSieves().filter((s) => +s <= topSieve() + 1e-9);
 const lab = (s) => S.meta.labels[s] || [s + " mm", ""];
 const matName = (slot) => (S.mix.materials[slot]?.name || "").trim() || SLOT_NAMES[slot];
 const VCA_BREAK_AASHTO = { 37.5: 4.75, 25: 4.75, 19: 4.75, 12.5: 4.75, 9.5: 2.36, 4.75: 1.18 };
+function vcaSieveShort() { const v = vcaSieve(), k = allSieves().find((x) => Math.abs(+x - +v) < 1e-9); return k ? lab(k)[1] : v != null ? v + " mm" : "PCS"; }
 function vcaSieveName(v) { if (v == null) return "-"; const k = allSieves().find((x) => Math.abs(+x - +v) < 1e-9); return k ? `${lab(k)[0].replace(" mm", "")} mm (${lab(k)[1]})` : `${v} mm`; }
 function vcaSieve() {
   const v = S.mix?.settings?.vca_sieve || "pcs", n = S.an?.nmas, pcs = S.an?.control?.coarse_pcs;
@@ -152,6 +153,7 @@ const GLOSSARY = {
   vbe: "Volume of effective binder in the mix, VMA minus air voids.",
   gse: "Effective specific gravity of the aggregate, from Gmm and Pb. It sits between Gsb and the apparent gravity.",
   gca: "Bulk specific gravity of the coarse fraction, retained on the VCA break sieve you choose in Criteria (the PCS by default). Used for VCAmix.",
+  druw: "Dry-rodded unit weight (AASHTO T 19) of the blend's coarse fraction retained on the VCA break sieve chosen in Criteria. The tool calculates VCA dry-rodded = (Gca × γw − DRUW) / (Gca × γw) × 100, with γw = 998 kg/m³ (62.3 lb/ft³).",
   vcabreak: "The sieve that splits coarse from fine for the VCA check. Bailey uses the PCS (2.36 mm for a 12.5 mm NMAS). AASHTO R 46 uses a break point sieve (4.75 mm for a 12.5 mm NMAS). Measure VCA dry-rodded on the material retained on the same sieve.",
   dust: "Dust proportion: % passing 0.075 mm divided by binder. AASHTO M 323 uses 0.6 to 1.2 on effective binder for dense mixes.",
   balance: "The balance pile takes up the difference when you change another pile, so the total stays at 100%.",
@@ -1034,7 +1036,7 @@ function vcaBreakField() {
     allSieves().filter((k) => +k <= 9.5 && +k >= 1.18).map((k) => h("option", { value: String(+k), selected: cur !== "pcs" && cur !== "aashto" && Math.abs(+cur - +k) < 1e-9 ? true : null }, `Other: ${vcaSieveName(k)}`)));
   sel.addEventListener("change", () => { S.mix.settings.vca_sieve = sel.value; changed({ now: true }); setTimeout(render, 400); });
   return h("div", { class: "vcabreak" }, h("label", { class: "f" }, h("span", {}, "VCA break sieve", tip("vcabreak")), sel),
-    h("p", { class: "hint" }, `VCAmix and the VCA check use the coarse fraction retained on ${vcaSieveName(vcaSieve())}. Measure VCA dry-rodded on the same fraction. The Bailey ratios still use the PCS.`));
+    h("p", { class: "hint" }, `VCAmix and the VCA check use the coarse fraction retained on ${vcaSieveName(vcaSieve())}. Measure the dry-rodded unit weight on the same fraction. The Bailey ratios still use the PCS.`));
 }
 async function runFit() {
   try { S.fit = await api("/api/fit", { mix: S.mix }); }
@@ -1518,11 +1520,12 @@ function renderLab(body, side, t) {
   const L = labOf(t), idx = S.mix.trials.indexOf(t), R = ["trials", idx, "results"];
   body.append(h("p", { class: "intro" }, "What you measured for this trial. The results update as you type."));
   body.append(h("section", { class: "card" }, h("h2", {}, "Mix and compaction"),
-    h("div", { class: "fgrid four" },
+    h("div", { class: "fgrid four labgrid" },
       h("label", { class: "f" }, h("span", {}, "Binder content Pb, %"), numInput(R.concat("pb"))),
       h("label", { class: "f" }, h("span", {}, "Gyrations, Ndes"), numInput(R.concat(["lab", "ndes"]), { placeholder: spec() ? `${spec().it.nd} (${spec().A.name})` : "e.g. 75" })),
-      h("label", { class: "f" }, h("span", {}, "Compaction temperature, °C"), numInput(R.concat(["lab", "temp"]), { placeholder: "optional" })),
-      h("label", { class: "f" }, h("span", {}, `VCA dry-rodded, % (plus ${vcaSieveName(vcaSieve())})`, tip("vcabreak")), numInput(R.concat("vcadrc"), { placeholder: "optional" })))));
+      h("label", { class: "f" }, h("span", {}, "Compaction temp, °C"), numInput(R.concat(["lab", "temp"]), { placeholder: "optional" })),
+      h("label", { class: "f" }, h("span", {}, `DRUW (+${vcaSieveShort()}), ${unitLabel()}`, tip("druw")), numInput(R.concat("druw"), { placeholder: "optional" }))),
+    h("p", { class: "calcnote", id: "vcadrc-calc" })));
   const sma = mixType() === "sma";
   const optCard = (h("details", { class: "card more opt", open: sma || num(t.results?.lab?.draindown) != null ? true : null },
     h("summary", {}, h("span", { class: "t" }, "Optional tests"), h("span", { class: "hint" }, sma ? "draindown, recommended for SMA" : "draindown")),
@@ -1547,6 +1550,11 @@ function renderLab(body, side, t) {
       t.results.gmm.length > 1 ? h("button", { class: "btn link", onclick: () => { t.results.gmm.pop(); changed({ now: true }); render(); } }, "Remove last") : null)));
   body.append(optCard);
   const upd = () => {
+    const vc = $("#vcadrc-calc");
+    if (vc) {
+      const gca = anTrial(t.id)?.gca, dr = num(t.results?.druw), gw = S.an?.conv === 62.4 ? 62.3 : 998;
+      vc.textContent = dr && gca ? `VCA dry-rodded = ${fmt(100 * (gca * gw - dr) / (gca * gw), 1)}%, from DRUW and Gca ${fmt(gca, 3)} of the +${vcaSieveShort()} fraction.` : num(t.results?.vcadrc) ? `Entered earlier: VCA dry-rodded ${fmt(t.results.vcadrc, 1)}%` : "";
+    }
     const g = t.results.gmb.map(num).filter((x) => x != null);
     const gm = t.results.gmm.map(num).filter((x) => x != null), gmA = gm.length ? gm.reduce((a2, b2) => a2 + b2, 0) / gm.length : null;
     t.results.gmb.forEach((x, i) => { const e = $("#sva-" + i); if (e) e.textContent = num(x) && gmA ? fmt(100 * (1 - num(x) / gmA), 1) : "-"; });
@@ -1635,6 +1643,7 @@ function moreVolumetrics(a) {
       row("Gca", fmt(x.gca, 3), `coarse fraction retained on ${vcaSieveName(x.vca_sieve)}, used for VCAmix`, "", "gca"),
       grp("Coarse aggregate contact (VCA check)"),
       row("VCAmix", fmt(ck.vca_mix ?? v.vca_mix, 1) + "%", `${ck.rule || ""}. Break sieve ${vcaSieveName(x.vca_sieve)}${x.vca_mode === "aashto" ? " (AASHTO R 46)" : x.vca_mode === "pcs" ? " (Bailey PCS)" : ""}.`, "", "vca"),
+      x.vcadrc != null && mixType() === "sma" ? row("VCA dry-rodded", fmt(x.vcadrc, 1) + "%", x.vcadrc_from === "druw" ? `from DRUW ${fmt(x.druw, 0)} ${unitLabel()} and Gca ${fmt(x.gca, 3)}` : x.vcadrc_from === "entered" ? "entered directly" : "from the Criteria target", "", "druw") : null,
       row("Check", ck.ok == null ? "-" : ck.ok ? "passes" : "does not pass", ck.text || "", ck.ok == null ? "" : ck.ok ? "st-ok" : "st-high"),
       ...specRows(v, x, row, grp, dd),
       dd != null ? grp("Optional tests") : null,
