@@ -471,7 +471,7 @@ table.cmp .arw { font-size: 11px; }
 
 /* version line, at the foot of every page */
 
-/* site footer, identical in Bailey Design Trials and the Cracking Test Analyzer */
+/* site footer, identical in Bailey Design Trials and the Mix Test Analyzer */
 .sitefoot { margin-top: auto; background: var(--navy-soft); border-top: 3px solid var(--orange); padding: 12px 24px 13px; font-size: 12.5px; line-height: 1.5; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
 .sitefoot p { margin: 0; }
 .sitefoot b { color: var(--ink); }
